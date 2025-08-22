@@ -48,9 +48,9 @@ const Layout = ({ children, transparentHeader = false }: LayoutProps) => {
 
   return (
     <div className="min-h-screen bg-[#F4EFE9] text-[#514640] font-inter flex flex-col">
-      <header className={`py-6 px-4 sticky top-0 z-50 bg-[#F4EFE9]/95 backdrop-blur border-b border-[#514640]/10 shadow-md transition-shadow`}>
-        <div className="container mx-auto flex justify-between items-center">
-          <Link to="/" className="w-24">
+      <header className={`py-4 md:py-6 sticky top-0 z-50 bg-[#F4EFE9]/95 backdrop-blur-lg border-b border-[#514640]/10 shadow-lg transition-all duration-300`}>
+        <div className="container mx-auto px-3 md:px-4 flex justify-between items-center">
+          <Link to="/" className="w-28 md:w-32">
             <img 
               src="/logo_new.webp" 
               alt="The Rug Cafe Logo" 
@@ -58,11 +58,20 @@ const Layout = ({ children, transparentHeader = false }: LayoutProps) => {
               style={{ animationDelay: '200ms', animationFillMode: 'forwards' }}
             />
           </Link>
-          <nav className="hidden md:flex space-x-10 items-center">
-            <Link to="/" className="hover:text-[#E3833B] transition-colors text-lg font-medium px-2 py-1">Home</Link>
-            <Link to="/menu" className="hover:text-[#E3833B] transition-colors text-lg font-medium px-2 py-1">Menu</Link>
-            <Link to="/about" className="hover:text-[#E3833B] transition-colors text-lg font-medium px-2 py-1">About</Link>
-            <Link to="/book" className="bg-[#E3833B] text-white px-7 py-3 rounded-full hover:bg-opacity-90 transition-colors font-semibold">
+          <nav className="hidden md:flex space-x-8 lg:space-x-12 items-center">
+            <Link to="/" className="hover:text-[#E3833B] transition-colors text-xl font-medium px-3 py-2 relative group">
+              Home
+              <span className="absolute inset-x-0 bottom-0 h-0.5 bg-[#E3833B] scale-x-0 group-hover:scale-x-100 transition-transform duration-300"></span>
+            </Link>
+            <Link to="/menu" className="hover:text-[#E3833B] transition-colors text-xl font-medium px-3 py-2 relative group">
+              Menu
+              <span className="absolute inset-x-0 bottom-0 h-0.5 bg-[#E3833B] scale-x-0 group-hover:scale-x-100 transition-transform duration-300"></span>
+            </Link>
+            <Link to="/about" className="hover:text-[#E3833B] transition-colors text-xl font-medium px-3 py-2 relative group">
+              About
+              <span className="absolute inset-x-0 bottom-0 h-0.5 bg-[#E3833B] scale-x-0 group-hover:scale-x-100 transition-transform duration-300"></span>
+            </Link>
+            <Link to="/book" className="bg-[#E3833B] text-white px-8 py-4 rounded-full hover:bg-opacity-90 hover:shadow-lg transition-all duration-300 transform hover:scale-105 font-bold text-lg">
               Book a Table
             </Link>
           </nav>
@@ -70,12 +79,12 @@ const Layout = ({ children, transparentHeader = false }: LayoutProps) => {
           {/* Mobile menu button */}
           <button
             ref={mobileMenuButtonRef}
-            className="md:hidden p-2 focus:outline-none"
+            className="md:hidden p-3 focus:outline-none touch-manipulation"
             aria-label="Open menu"
-            onClick={toggleMobileMenu} // Use state toggle function
+            onClick={toggleMobileMenu}
             aria-expanded={isMobileMenuOpen}
           >
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-7 h-7">
               <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
             </svg>
           </button>
@@ -84,19 +93,17 @@ const Layout = ({ children, transparentHeader = false }: LayoutProps) => {
           <div
             ref={mobileMenuRef}
             id="mobileNav"
-            // Conditionally apply 'hidden' class based on state
-            className={`md:hidden absolute top-full right-4 mt-2 w-56 bg-white rounded-xl shadow-lg py-2 flex flex-col z-50 border border-[#514640]/10 ${isMobileMenuOpen ? 'block' : 'hidden'}`}
+            className={`md:hidden absolute top-full right-0 mt-3 w-64 bg-white rounded-2xl shadow-2xl py-4 flex flex-col z-50 border border-[#514640]/10 ${isMobileMenuOpen ? 'block' : 'hidden'}`}
             tabIndex={-1}
             aria-label="Mobile navigation menu"
             aria-hidden={!isMobileMenuOpen}
           >
-            {/* Use closeMobileMenu function on link clicks */}
-            <Link to="/" className="block px-4 py-3 text-lg hover:bg-[#F4EFE9] hover:text-[#E3833B] transition-colors" onClick={closeMobileMenu}>Home</Link>
-            <Link to="/menu" className="block px-4 py-3 text-lg hover:bg-[#F4EFE9] hover:text-[#E3833B] transition-colors" onClick={closeMobileMenu}>Menu</Link>
-            <Link to="/about" className="block px-4 py-3 text-lg hover:bg-[#F4EFE9] hover:text-[#E3833B] transition-colors" onClick={closeMobileMenu}>About</Link>
+            <Link to="/" className="block px-6 py-4 text-xl font-medium hover:bg-[#F4EFE9] hover:text-[#E3833B] transition-colors touch-manipulation" onClick={closeMobileMenu}>Home</Link>
+            <Link to="/menu" className="block px-6 py-4 text-xl font-medium hover:bg-[#F4EFE9] hover:text-[#E3833B] transition-colors touch-manipulation" onClick={closeMobileMenu}>Menu</Link>
+            <Link to="/about" className="block px-6 py-4 text-xl font-medium hover:bg-[#F4EFE9] hover:text-[#E3833B] transition-colors touch-manipulation" onClick={closeMobileMenu}>About</Link>
             <Link 
               to="/book" 
-              className="block mt-2 mx-4 mb-2 bg-[#E3833B] text-white px-6 py-3 text-center rounded-full hover:bg-opacity-90 transition-colors font-semibold"
+              className="block mt-3 mx-6 mb-2 bg-[#E3833B] text-white px-8 py-4 text-center rounded-full hover:bg-opacity-90 hover:shadow-lg transition-all duration-300 font-bold text-lg touch-manipulation"
               onClick={closeMobileMenu}
             >
               Book a Table
@@ -109,23 +116,23 @@ const Layout = ({ children, transparentHeader = false }: LayoutProps) => {
         {children}
       </main>
       
-      <footer className="bg-[#514640] text-white py-12">
+      <footer className="bg-[#514640] text-white py-16">
         <div className="container mx-auto px-4">
-          <div className="flex flex-col md:flex-row justify-between items-center gap-8 md:gap-0">
-            <div className="mb-8 md:mb-0 flex flex-col items-center md:items-start">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-12 items-start">
+            <div className="flex flex-col items-center md:items-start">
               <img 
                 src="/logo_new.webp" 
                 alt="The Rug Cafe Logo" 
-                className="w-32 h-auto mb-4 mx-auto md:mx-0 transition-transform duration-500 ease-out opacity-0 translate-y-[-16px] animate-logo-fade-in hover:scale-110 hover:shadow-2xl hover:z-10 focus:outline-none invert"
+                className="w-32 h-auto mb-6 transition-transform duration-500 ease-out opacity-0 translate-y-[-16px] animate-logo-fade-in hover:scale-110 hover:shadow-2xl hover:z-10 focus:outline-none invert"
                 style={{ animationDelay: '200ms', animationFillMode: 'forwards' }}
               />
-              <p className="text-center md:text-left font-semibold mb-2">309-311 Harrow Rd, London W9 3RG</p>
-              <div className="w-full max-w-xs md:max-w-[300px] rounded-lg shadow-lg overflow-hidden mb-2">
+              <p className="text-center md:text-left font-semibold mb-4 text-lg">309-311 Harrow Rd, London W9 3RG</p>
+              <div className="w-full max-w-sm rounded-lg shadow-lg overflow-hidden mb-4">
                 <iframe
                   title="The Rug Cafe Map"
                   src="https://www.google.com/maps?q=309-311+Harrow+Rd,+London+W9+3RG&output=embed"
                   width="100%"
-                  height="180"
+                  height="200"
                   style={{ border: 0 }}
                   allowFullScreen={true}
                   loading="lazy"
@@ -136,22 +143,31 @@ const Layout = ({ children, transparentHeader = false }: LayoutProps) => {
                 href="https://maps.google.com/?q=309-311+Harrow+Rd,+London+W9+3RG"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-block bg-[#E3833B] text-white px-4 py-2 rounded-full hover:bg-opacity-90 transition-colors text-sm font-semibold mb-2"
+                className="inline-block bg-[#E3833B] text-white px-6 py-3 rounded-full hover:bg-opacity-90 transition-colors font-semibold"
               >
                 Get Directions
               </a>
             </div>
             
-            <div className="flex flex-col items-center md:items-end">
-              <p className="mb-2 font-semibold">Mon-Sat: 08:00-18:00 | Sun: 08:00-16:00</p>
-              <button className="bg-[#E3833B] text-white px-6 py-2 rounded-full hover:bg-opacity-90 transition-colors font-semibold">
-                +44 (0)20-1234-5678
-              </button>
+            <div className="flex flex-col items-center md:items-end space-y-6">
+              <div className="text-center md:text-right">
+                <h3 className="font-semibold text-xl mb-2">Opening Hours</h3>
+                <p className="text-lg">Mon-Sat: 08:00-18:00</p>
+                <p className="text-lg">Sun: 08:00-16:00</p>
+              </div>
               
-              <div className="flex space-x-4 mt-4">
-                <a href="https://www.instagram.com/therug_london/" target="_blank" rel="noopener noreferrer" className="flex items-center hover:text-[#E3833B] transition-colors">
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 24 24" width="22" height="22" className="mr-1"><path d="M7.75 2h8.5A5.75 5.75 0 0 1 22 7.75v8.5A5.75 5.75 0 0 1 16.25 22h-8.5A5.75 5.75 0 0 1 2 16.25v-8.5A5.75 5.75 0 0 1 7.75 2zm0 1.5A4.25 4.25 0 0 0 3.5 7.75v8.5A4.25 4.25 0 0 0 7.75 20.5h8.5A4.25 4.25 0 0 0 20.5 16.25v-8.5A4.25 4.25 0 0 0 16.25 3.5zm4.25 2.75a5.75 5.75 0 1 1 0 11.5 5.75 5.75 0 0 1 0-11.5zm0 1.5a4.25 4.25 0 1 0 0 8.5 4.25 4.25 0 0 0 0-8.5zm5.25 1.25a1 1 0 1 1-2 0 1 1 0 0 1 2 0z"></path></svg>
-                  Instagram
+              <div className="text-center md:text-right">
+                <h3 className="font-semibold text-xl mb-2">Contact</h3>
+                <button className="bg-[#E3833B] text-white px-6 py-3 rounded-full hover:bg-opacity-90 transition-colors font-semibold">
+                  +44 (0)20-1234-5678
+                </button>
+              </div>
+              
+              <div className="text-center md:text-right">
+                <h3 className="font-semibold text-xl mb-2">Follow Us</h3>
+                <a href="https://www.instagram.com/therug_london/" target="_blank" rel="noopener noreferrer" className="inline-flex items-center space-x-2 hover:text-[#E3833B] transition-colors">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 24 24" width="24" height="24"><path d="M7.75 2h8.5A5.75 5.75 0 0 1 22 7.75v8.5A5.75 5.75 0 0 1 16.25 22h-8.5A5.75 5.75 0 0 1 2 16.25v-8.5A5.75 5.75 0 0 1 7.75 2zm0 1.5A4.25 4.25 0 0 0 3.5 7.75v8.5A4.25 4.25 0 0 0 7.75 20.5h8.5A4.25 4.25 0 0 0 20.5 16.25v-8.5A4.25 4.25 0 0 0 16.25 3.5zm4.25 2.75a5.75 5.75 0 1 1 0 11.5 5.75 5.75 0 0 1 0-11.5zm0 1.5a4.25 4.25 0 1 0 0 8.5 4.25 4.25 0 0 0 0-8.5zm5.25 1.25a1 1 0 1 1-2 0 1 1 0 0 1 2 0z"></path></svg>
+                  <span>@therug_london</span>
                 </a>
               </div>
             </div>
