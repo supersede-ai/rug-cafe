@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import '../styles/logo-animations.css';
+import VoiceAssistantButton from '@/components/VoiceAssistantButton';
 
 type LayoutProps = {
   children: React.ReactNode;
@@ -178,11 +179,13 @@ const Layout = ({ children, transparentHeader = false }: LayoutProps) => {
           </div>
         </div>
       </footer>
-    {/* Scroll-to-top button */}
-    <button
-      onClick={() => window.scrollTo({top: 0, behavior: 'smooth'})}
-      className="fixed bottom-8 right-8 z-50 bg-[#E3833B] text-white rounded-full p-4 shadow-lg hover:bg-[#d97706] transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-white"
-      aria-label="Scroll to top"
+      {/* Voice assistant floating button */}
+      <VoiceAssistantButton />
+      {/* Scroll-to-top button */}
+      <button
+        onClick={() => window.scrollTo({top: 0, behavior: 'smooth'})}
+        className="fixed bottom-8 right-8 z-50 bg-[#E3833B] text-white rounded-full p-4 shadow-lg hover:bg-[#d97706] transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-white"
+        aria-label="Scroll to top"
       style={{display: 'none'}}
       id="scrollToTopBtn"
     >

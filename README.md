@@ -1,57 +1,52 @@
-# Welcome to The Rug Café project
+# The Rug Café — Website & Voice Assistant
 
-## Project info
+This repo contains the Rug Café site (Vite + React + Tailwind + shadcn) and an on-brand, floating voice assistant powered by the OpenAI Agents SDK (Realtime, WebRTC).
 
-**URL**: https://rug-cafe-vibe-maker.com
+## Project Info
+- Live URL: https://rug-cafe-vibe-maker.com
+- Tech: Vite, TypeScript, React, Tailwind, shadcn-ui
 
-## How can I edit this code?
+## Quick Start
 
-There are several ways of editing your application.
+Prereqs
+- Node.js >= 18 (recommended >= 18.18)
+- An OpenAI API key (server-side only)
 
-**Use your preferred IDE**
-
-If you want to work locally using your own IDE, you can clone this repo and push changes.
-
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
-
+Setup
 ```sh
-# Step 1: Clone the repository using the project's Git URL.
 git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
 cd <YOUR_PROJECT_NAME>
+npm install
+cp .env.example .env
+# edit .env and set OPENAI_API_KEY=<your_key>
+```
 
-# Step 3: Install the necessary dependencies.
-npm i
+Run (two terminals)
+```sh
+# Terminal 1: token server (mints ephemeral client tokens)
+npm run voice:server
 
-# Step 4: Start the development server with auto-reloading and an instant preview.
+# Terminal 2: dev server (auto-picks port if 8080 is busy)
 npm run dev
 ```
 
-**Edit a file directly in GitHub**
+Open the printed localhost URL, click the “Ask The Rug” mic button, allow mic access, and speak.
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+## Voice Assistant Docs
+- Overview & detailed guide: docs/VOICE_ASSISTANT.md
+- Requirements & setup checklist: docs/REQUIREMENTS.md
 
-## What technologies are used for this project?
+## How It Works (Current)
+- The browser asks our tiny Node server (`server/index.js`) for an ephemeral token (never exposes the standard key to the client).
+- The frontend initializes a Realtime session via the OpenAI Agents SDK (WebRTC), which handles microphone input and audio output.
+- To ground answers, the assistant includes a clipped snapshot of the current page’s visible text in its instructions. If Hours or Menu are visible on the page, it can answer based on that.
+- You can later add server-backed tools (e.g., `getHours`, `getMenu`) for canonical data. We’ve kept the baseline simple for now; see “Adding Rich Context Later” in docs/VOICE_ASSISTANT.md.
 
-This project is built with:
+## Editing the Site
+Use your preferred IDE or edit in GitHub. For local dev, install Node, clone, install deps, and run `npm run dev`.
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+## Deployment
+Bring your own hosting. Ensure the token server runs behind HTTPS, set `VITE_VOICE_TOKEN_URL` to your deployed `/api/voice/token`, and keep `OPENAI_API_KEY` server-side.
 
-## How can I deploy this project?
-
-To deploy this project, you will need to set up your own deployment process.
-
-## Can I connect a custom domain to my project?
-
-Yes, you can!
-
-To connect a domain, you will need to set up your own domain configuration.
+## Custom Domain
+Configure DNS and hosting according to your platform’s guidance.
