@@ -19,6 +19,10 @@ Open two terminals:
 
 Terminal 1 — token server
 ```
+# Option A (recommended for first run / easy debugging)
+export OPENAI_API_KEY=sk-... && npm run voice:server
+
+# Option B (if OPENAI_API_KEY is already exported in your shell)
 npm run voice:server
 ```
 Listens on `http://localhost:8787`.
@@ -31,6 +35,13 @@ Vite starts on `http://localhost:8080` (auto-increments to next free port if nee
 
 Then open the printed local URL, click the “Ask The Rug” button, allow mic access, and speak.
 
+### Important: Why the explicit `export OPENAI_API_KEY`?
+- The token server (`server/index.js`) is intentionally dependency-free and does not auto-load variables from `.env`.
+- Vite loads `.env` for the frontend, but the Node process that runs the token server does not.
+- If your shell doesn’t already have `OPENAI_API_KEY` exported, the token server won’t see it and the assistant will show `stopped` after failing to connect.
+- Quick fix: `export OPENAI_API_KEY=sk-... && npm run voice:server` (PowerShell: `$env:OPENAI_API_KEY='sk-...'; npm run voice:server`).
+- Optional alternative: change the npm script to load dotenv at runtime: `"voice:server": "node -r dotenv/config server/index.js"` (requires installing `dotenv`).
+
 ## Important Paths
 - `server/index.js` — Ephemeral token server (no extra deps)
 - `src/modules/voice-assistant/client.ts` — Agents SDK voice client
@@ -42,4 +53,3 @@ Then open the printed local URL, click the “Ask The Rug” button, allow mic a
 - Do not commit `.env` (ignored by `.gitignore`).
 - Keep the standard API key server-only. The client uses ephemeral tokens.
 - If your local dev uses a non-default token URL, update `VITE_VOICE_TOKEN_URL` in `.env`.
-
