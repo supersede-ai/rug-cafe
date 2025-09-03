@@ -47,6 +47,29 @@ export class VoiceAssistantClient {
       if (!(navigator as any).mediaDevices || !(navigator as any).mediaDevices.getUserMedia) {
         throw new Error('Microphone access not supported in this browser.');
       }
+
+      // Proactively request the microphone to trigger the iOS permission sheet
+      // and warm up audio capture before the SDK session connects.
+      try {
+        const warmup = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+          } as MediaTrackConstraints,
+        });
+        // Immediately stop tracks; the SDK will acquire its own stream.
+        warmup.getTracks().forEach((t) => t.stop());
+      } catch (permErr: any) {
+        const name = permErr?.name || '';
+        if (/NotAllowedError|Permission/i.test(name)) {
+          throw new Error('Microphone permission denied. Please allow mic access.');
+        }
+        if (/NotFoundError|DevicesNotFound/i.test(name)) {
+          throw new Error('No microphone detected on this device.');
+        }
+        // Unknown error; rethrow to surface details
+        throw permErr;
+      }
       // Fetch ephemeral key from our backend
       const tokenRes = await fetch(this.opts.tokenUrl);
       if (!tokenRes.ok) {
@@ -78,7 +101,12 @@ export class VoiceAssistantClient {
       this.session = new RealtimeSession(this.agent);
 
       this.opts.onStatus('connecting');
-      await this.session.connect({ apiKey: ephemeral });
+      // Add a connection timeout so the UI doesn't hang forever
+      const timeoutMs = 15000;
+      await Promise.race([
+        this.session.connect({ apiKey: ephemeral }),
+        new Promise((_resolve, reject) => setTimeout(() => reject(new Error('connect-timeout')), timeoutMs)),
+      ]);
       this.opts.onStatus('ready');
     } catch (e) {
       this.opts.onError(e);
@@ -86,6 +114,9 @@ export class VoiceAssistantClient {
       // Surface a more helpful state for mobile issues
       if (/secure context/i.test(msg)) this.opts.onStatus('insecure-context');
       else if (/Microphone access not supported/i.test(msg)) this.opts.onStatus('no-mic');
+      else if (/permission denied|allow mic/i.test(msg)) this.opts.onStatus('mic-denied');
+      else if (/no microphone detected/i.test(msg)) this.opts.onStatus('no-mic');
+      else if (/connect-timeout/i.test(msg)) this.opts.onStatus('timeout');
       else this.opts.onStatus('error');
       this.started = false;
       await this.stop();
