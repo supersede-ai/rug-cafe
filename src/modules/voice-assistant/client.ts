@@ -41,7 +41,11 @@ export class VoiceAssistantClient {
     try {
       // Fetch ephemeral key from our backend
       const tokenRes = await fetch(this.opts.tokenUrl);
-      if (!tokenRes.ok) throw new Error(`Token error: ${tokenRes.status}`);
+      if (!tokenRes.ok) {
+        let body = '';
+        try { body = await tokenRes.text(); } catch {}
+        throw new Error(`Token error: ${tokenRes.status}${body ? ` - ${body}` : ''}`);
+      }
       const tokenJson = await tokenRes.json();
       const ephemeral = tokenJson?.value || tokenJson?.client_secret?.value;
       if (!ephemeral) throw new Error('No ephemeral key returned');
