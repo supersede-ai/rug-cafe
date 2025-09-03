@@ -50,8 +50,12 @@ const VoiceAssistantButton: React.FC<Props> = ({ position = 'right', label = 'As
     <div
       className={[
         'fixed z-[100]',
-        position === 'right' ? 'right-6 md:right-8' : 'left-6 md:left-8',
-        'bottom-8',
+        // On mobile, prefer bottom-left to avoid Book button on right
+        // On md+ fallback to the provided position (default right)
+        'left-4 right-auto md:left-auto',
+        position === 'right' ? 'md:right-8' : 'md:left-8',
+        'bottom-6 md:bottom-8',
+        'pb-[env(safe-area-inset-bottom)]',
       ].join(' ')}
       onDragOver={preventDnD}
       onDrop={preventDnD}
@@ -64,17 +68,18 @@ const VoiceAssistantButton: React.FC<Props> = ({ position = 'right', label = 'As
         aria-label={active ? 'Stop voice assistant' : 'Start voice assistant'}
         className={[
           'flex items-center space-x-3 rounded-full shadow-xl transition-all duration-300 touch-manipulation',
-          'px-5 py-4 md:px-6 md:py-5',
+          'px-4 py-3 md:px-6 md:py-5',
           'bg-gradient-to-r from-[#E3833B] to-[#FFB347] text-white',
+          'ring-1 ring-black/5',
           active ? 'scale-105' : 'hover:scale-105 hover:shadow-2xl',
         ].join(' ')}
       >
         <MicIcon active={active} busy={isBusy} />
-        <span className="font-bold text-base md:text-lg">
+        <span className="font-bold text-sm sm:text-base md:text-lg">
           {active ? (isBusy ? 'Connecting…' : 'Listening… tap to stop') : label}
         </span>
       </button>
-      <div className="mt-2 ml-1 text-xs md:text-sm text-[#514640] bg-white/80 backdrop-blur rounded-full px-3 py-1 shadow">
+      <div className="hidden sm:block mt-2 ml-1 text-xs md:text-sm text-[#514640] bg-white/80 backdrop-blur rounded-full px-3 py-1 shadow pointer-events-none" aria-live="polite">
         {active ? `Status: ${status}` : 'Ask about hours, menu, vegan options'}
       </div>
     </div>

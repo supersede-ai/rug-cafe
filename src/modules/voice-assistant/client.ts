@@ -39,6 +39,14 @@ export class VoiceAssistantClient {
     this.opts.onStatus('requesting-mic');
 
     try {
+      // Basic environment checks (especially for mobile)
+      const isLocalhost = /^(localhost|127\.0\.0\.1|\[::1\])$/i.test(location.hostname);
+      if (!isLocalhost && typeof window !== 'undefined' && !window.isSecureContext) {
+        throw new Error('Microphone requires a secure context (HTTPS) on mobile browsers.');
+      }
+      if (!(navigator as any).mediaDevices || !(navigator as any).mediaDevices.getUserMedia) {
+        throw new Error('Microphone access not supported in this browser.');
+      }
       // Fetch ephemeral key from our backend
       const tokenRes = await fetch(this.opts.tokenUrl);
       if (!tokenRes.ok) {
@@ -74,7 +82,11 @@ export class VoiceAssistantClient {
       this.opts.onStatus('ready');
     } catch (e) {
       this.opts.onError(e);
-      this.opts.onStatus('error');
+      const msg = (e as any)?.message || String(e);
+      // Surface a more helpful state for mobile issues
+      if (/secure context/i.test(msg)) this.opts.onStatus('insecure-context');
+      else if (/Microphone access not supported/i.test(msg)) this.opts.onStatus('no-mic');
+      else this.opts.onStatus('error');
       this.started = false;
       await this.stop();
     }
