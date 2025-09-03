@@ -1,9 +1,6 @@
 // Vercel Serverless Function: Mint an ephemeral token for the OpenAI Realtime API.
 // Never expose your standard OPENAI_API_KEY to the browser.
 
-// Ensure we run on Node runtime with global fetch available
-export const config = { runtime: 'nodejs20.x' } as const;
-
 export default async function handler(req: any, res: any) {
   if (req.method === 'OPTIONS') {
     res.status(204).end();
