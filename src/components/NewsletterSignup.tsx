@@ -75,18 +75,6 @@ const NewsletterSignup: React.FC<NewsletterSignupProps> = ({
 
   return (
     <>
-      {/* Floating button to reopen newsletter */}
-      {!isOpen && (
-        <button
-          onClick={() => setIsOpen(true)}
-          className="fixed bottom-8 left-8 z-40 bg-[#E3833B] text-white rounded-full p-3 shadow-lg hover:bg-[#d97706] transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-white"
-          aria-label="Subscribe to newsletter"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" className="w-6 h-6">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-          </svg>
-        </button>
-      )}
       
       <AnimatePresence>
         {isOpen && (
