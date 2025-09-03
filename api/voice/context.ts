@@ -1,6 +1,8 @@
 // Optional: Return additional context for the assistant.
 // You can enrich this later to read from a CMS or database.
 
+export const config = { runtime: 'nodejs20.x' } as const;
+
 export default async function handler(req: any, res: any) {
   if (req.method === 'OPTIONS') {
     res.status(204).end();
@@ -18,4 +20,3 @@ export default async function handler(req: any, res: any) {
     message: 'Add canonical hours/menu here if desired',
   });
 }
-
