@@ -75,6 +75,13 @@ const Layout = ({ children, transparentHeader = false }: LayoutProps) => {
             <Link to="/book" className="bg-[#E3833B] text-white px-8 py-4 rounded-full hover:bg-opacity-90 hover:shadow-lg transition-all duration-300 transform hover:scale-105 font-bold text-lg">
               Book a Table
             </Link>
+            <Link
+              to="/admin/bookings"
+              className="border-2 border-[#514640] text-[#514640] px-6 py-3 rounded-full hover:bg-[#514640] hover:text-white transition-all duration-300 font-semibold text-lg"
+              aria-label="Go to Admin Bookings"
+            >
+              Admin Bookings
+            </Link>
           </nav>
 
           {/* Mobile menu button */}
@@ -108,6 +115,13 @@ const Layout = ({ children, transparentHeader = false }: LayoutProps) => {
               onClick={closeMobileMenu}
             >
               Book a Table
+            </Link>
+            <Link
+              to="/admin/bookings"
+              className="block mx-6 mb-2 border-2 border-[#514640] text-[#514640] px-8 py-4 text-center rounded-full hover:bg-[#514640] hover:text-white transition-all duration-300 font-semibold text-lg touch-manipulation"
+              onClick={closeMobileMenu}
+            >
+              Admin Bookings
             </Link>
           </div>
         </div>
