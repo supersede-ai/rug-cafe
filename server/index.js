@@ -1,12 +1,14 @@
 // Minimal token + booking server for local dev.
 // Node 18+ for built-in fetch and ESM support.
+// Load local .env vars for convenience in dev.
+import 'dotenv/config';
 
 import http from 'http';
 import { URL, fileURLToPath } from 'url';
 import path from 'path';
 import { promises as fs } from 'fs';
 
-const PORT = process.env.PORT || 8787;
+const PORT_ENV = Number(process.env.PORT) || 8787;
 
 // Simple CORS helper
 function writeCORS(res) {
@@ -173,6 +175,42 @@ const server = http.createServer(async (req, res) => {
   res.end(JSON.stringify({ error: 'Not found' }));
 });
 
-server.listen(PORT, () => {
-  console.log(`[voice-token-server] listening on :${PORT}`);
+async function writePortFile(port) {
+  try {
+    const portFile = path.join(__dirname, '.port');
+    await fs.writeFile(portFile, String(port), 'utf-8');
+  } catch {}
+}
+
+function listenWithFallback(server, startPort, attempts = 10) {
+  return new Promise((resolve, reject) => {
+    let port = startPort;
+    const tryListen = () => {
+      server.once('error', (err) => {
+        if ((err && err.code) === 'EADDRINUSE' && attempts > 0) {
+          port += 1;
+          attempts -= 1;
+          setTimeout(() => {
+            server.listen(port);
+          }, 50);
+        } else {
+          reject(err);
+        }
+      });
+      server.once('listening', async () => {
+        const addr = server.address();
+        const actual = typeof addr === 'object' && addr ? addr.port : port;
+        await writePortFile(actual);
+        console.log(`[voice-token-server] listening on :${actual}`);
+        resolve(actual);
+      });
+      server.listen(port);
+    };
+    tryListen();
+  });
+}
+
+listenWithFallback(server, PORT_ENV).catch((err) => {
+  console.error('[voice-token-server] failed to start', err);
+  process.exit(1);
 });

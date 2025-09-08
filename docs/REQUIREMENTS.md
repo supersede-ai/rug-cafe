@@ -13,6 +13,7 @@
 4) Edit `.env` and set:
    - `OPENAI_API_KEY=<your_server_key>`
    - Optionally tune: `REALTIME_MODEL`, `REALTIME_VOICE`, `VITE_VOICE_TOKEN_URL`
+   - Ensure `PORT=8787` so Vite proxy matches the token server during dev
 
 ## Running Locally
 Open two terminals:
@@ -35,12 +36,10 @@ Vite starts on `http://localhost:8080` (auto-increments to next free port if nee
 
 Then open the printed local URL, click the “Ask The Rug” button, allow mic access, and speak.
 
-### Important: Why the explicit `export OPENAI_API_KEY`?
-- The token server (`server/index.js`) is intentionally dependency-free and does not auto-load variables from `.env`.
-- Vite loads `.env` for the frontend, but the Node process that runs the token server does not.
-- If your shell doesn’t already have `OPENAI_API_KEY` exported, the token server won’t see it and the assistant will show `stopped` after failing to connect.
-- Quick fix: `export OPENAI_API_KEY=sk-... && npm run voice:server` (PowerShell: `$env:OPENAI_API_KEY='sk-...'; npm run voice:server`).
-- Optional alternative: change the npm script to load dotenv at runtime: `"voice:server": "node -r dotenv/config server/index.js"` (requires installing `dotenv`).
+### Important: Environment variables
+- The token server (`server/index.js`) loads `.env` via `dotenv/config`, so putting `OPENAI_API_KEY` in `.env` works.
+- Alternatively, you can export it in your shell: `export OPENAI_API_KEY=sk-... && npm run voice:server` (PowerShell: `$env:OPENAI_API_KEY='sk-...'; npm run voice:server`).
+- Keep `PORT=8787` so Vite (`vite.config.ts`) proxies `/api` traffic to the correct port.
 
 ## Important Paths
 - `server/index.js` — Ephemeral token server (no extra deps)

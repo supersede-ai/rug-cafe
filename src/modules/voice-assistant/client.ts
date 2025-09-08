@@ -35,6 +35,7 @@ export class VoiceAssistantClient {
   }
 
   async start() {
+    console.log('VoiceAssistantClient: Starting...');
     if (this.started) return;
     this.started = true;
     this.opts.onStatus('requesting-mic');
@@ -72,6 +73,7 @@ export class VoiceAssistantClient {
         throw permErr;
       }
       // Fetch ephemeral key from our backend
+      console.log('VoiceAssistantClient: Fetching token from:', this.opts.tokenUrl);
       const tokenRes = await fetch(this.opts.tokenUrl);
       if (!tokenRes.ok) {
         let body = '';
@@ -79,6 +81,7 @@ export class VoiceAssistantClient {
         throw new Error(`Token error: ${tokenRes.status}${body ? ` - ${body}` : ''}`);
       }
       const tokenJson = await tokenRes.json();
+      console.log('VoiceAssistantClient: Token response:', tokenJson);
       const ephemeral = tokenJson?.value || tokenJson?.client_secret?.value;
       if (!ephemeral) throw new Error('No ephemeral key returned');
       // Build instructions with a page snapshot for grounded answers

@@ -1,5 +1,9 @@
 # Repository Guidelines
 
+## Git & Remote Safety
+- Never run `git push`, `git push --force`, or modify remotes unless explicitly instructed by the maintainer for that specific action. Always seek explicit confirmation before any remote write.
+- Local work allowed: `git status`, `git diff`, `git add`, and `git commit` (no pushes). Avoid `git rebase --rebase-merges` or history rewrites without instruction.
+
 ## Project Structure & Module Organization
 - `src/` — React + TypeScript app: `components/` (UI), `pages/` (routes), `hooks/`, `lib/`, `modules/voice-assistant/` (SDK client).
 - `server/` — Local Node token server (`server/index.js`).
