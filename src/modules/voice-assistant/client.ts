@@ -1,6 +1,7 @@
 // Voice assistant client using OpenAI Agents SDK (RealtimeAgent + RealtimeSession)
 // Keeps the same simple start/stop/status surface for reuse across sites.
-import { RealtimeAgent, RealtimeSession } from '@openai/agents/realtime';
+import { RealtimeAgent, RealtimeSession, tool } from '@openai/agents/realtime';
+import * as z from 'zod';
 
 export type VoiceAssistantOptions = {
   tokenUrl?: string; // Defaults to '/api/voice/token'
@@ -91,12 +92,57 @@ export class VoiceAssistantClient {
         'Guidelines:',
         '- If unsure, say so and direct to Menu or Hours.',
         '- Keep answers concise and friendly.',
+        '- When a guest wants a reservation, gather date, time, party size, name, and at least one contact (email or phone). Confirm details aloud, then call the book_table tool.',
       ].join('\n');
 
       // Initialize SDK agent + session
+      const bookTableTool = tool({
+        name: 'book_table',
+        description: 'Create a table reservation at The Rug Café. Use when a guest asks to book/reserve a table.',
+        strict: true,
+        parameters: z.object({
+          date: z.string().describe('Booking date in YYYY-MM-DD'),
+          time: z.string().describe('Booking time in HH:MM 24h'),
+          partySize: z.number().int().min(1).max(20).describe('Number of guests'),
+          name: z.string().min(2).describe('Guest full name'),
+          contact: z
+            .object({
+              email: z.string().email().optional(),
+              phone: z.string().min(7).optional(),
+            })
+            .refine((c) => !!c.email || !!c.phone, {
+              message: 'Provide at least an email or phone',
+            }),
+          specialRequests: z.string().optional(),
+        }),
+        async execute(input) {
+          const res = await fetch('/api/booking', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              date: input.date,
+              time: input.time,
+              partySize: input.partySize,
+              name: input.name,
+              email: input.contact?.email,
+              phone: input.contact?.phone,
+              specialRequests: input.specialRequests,
+            }),
+          });
+          if (!res.ok) {
+            let text = '';
+            try { text = await res.text(); } catch {}
+            throw new Error(`Booking failed: ${res.status}${text ? ` - ${text}` : ''}`);
+          }
+          return await res.json();
+        },
+      });
+
       this.agent = new RealtimeAgent({
         name: 'Rug Assistant',
         instructions,
+        tools: [bookTableTool],
+        voice: this.opts.voice,
       });
       this.session = new RealtimeSession(this.agent);
 
