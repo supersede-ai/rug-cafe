@@ -1,0 +1,27 @@
+{
+  "env": {
+    "MAX_THINKING_TOKENS": "32000"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(find:*)",
+      "Bash(rm:*)",
+      "Bash(ls:*)",
+      "Bash(touch:*)",
+      "Bash(mv:*)",
+      "Bash(git stash:*)",
+      "Bash(git checkout:*)",
+      "Bash(rg:*)",
+      "Bash(mkdir:*)",
+      "WebSearch(*)",
+      "WebFetch(*)"
+    ],
+    "deny": [
+      "Bash(xcodebuild:*)"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "RepoPrompt"
+  ]
+}

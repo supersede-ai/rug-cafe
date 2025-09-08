@@ -110,13 +110,13 @@ export class VoiceAssistantClient {
           name: z.string().min(2).describe('Guest full name'),
           contact: z
             .object({
-              email: z.string().email().optional(),
-              phone: z.string().min(7).optional(),
+              email: z.string().email().optional().nullable(),
+              phone: z.string().min(7).optional().nullable(),
             })
             .refine((c) => !!c.email || !!c.phone, {
               message: 'Provide at least an email or phone',
             }),
-          specialRequests: z.string().optional(),
+          specialRequests: z.string().optional().nullable(),
         }),
         async execute(input) {
           const res = await fetch('/api/booking', {
