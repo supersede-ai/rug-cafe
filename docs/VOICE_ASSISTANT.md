@@ -65,8 +65,9 @@ Branding & Prompt
 - Placement/look: tweak classes in `src/components/VoiceAssistantButton.tsx`.
 
 Ports
-- Token server: `http://localhost:8787`
-- Vite dev server: tries `8080` then auto-increments to the next free port (e.g., `8082`).
+- Token server: defaults to `http://localhost:8787` but will auto-increment if busy; it writes the chosen port to `server/.port`.
+- Vite dev server: tries `8080` then auto-increments.
+- During dev, Vite reads `server/.port` to proxy `/api` to the correct token server port automatically.
 
 ## Key Files
 - `server/index.js` — ephemeral token server
@@ -96,4 +97,3 @@ We briefly implemented this and then reverted for now so you can commit a stable
 - Button opens `/book`: ensure the mic button sits above other floating links; we set a higher z-index. If needed, move the mic to the left or raise it slightly.
 - Token errors: make sure `npm run voice:server` is running and `OPENAI_API_KEY` is set.
 - Port conflicts: Vite auto-increments; check terminal output for the final URL.
-

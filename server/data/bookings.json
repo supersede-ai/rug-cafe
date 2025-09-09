@@ -1,1 +1,30 @@
-[]
+[
+  {
+    "id": "rug_mfbruk5w_bnj2",
+    "status": "confirmed",
+    "source": "voice",
+    "createdAt": "2025-09-08T23:47:28.532Z",
+    "venue": "The Rug Café",
+    "date": "2025-09-14",
+    "time": "13:30",
+    "partySize": 4,
+    "name": "Sim",
+    "email": null,
+    "phone": "07976 1111 111",
+    "specialRequests": "Birthday cake for a friend's birthday."
+  },
+  {
+    "id": "rug_mfcf31i0_qoqe",
+    "status": "confirmed",
+    "source": "voice",
+    "createdAt": "2025-09-09T10:37:55.416Z",
+    "venue": "The Rug Café",
+    "date": "2025-09-10",
+    "time": "13:00",
+    "partySize": 4,
+    "name": "Sim",
+    "email": "sim@test.com",
+    "phone": null,
+    "specialRequests": "Large table requested"
+  }
+]

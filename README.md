@@ -50,3 +50,34 @@ Bring your own hosting. Ensure the token server runs behind HTTPS, set `VITE_VOI
 
 ## Custom Domain
 Configure DNS and hosting according to your platform’s guidance.
+
+## Database (Supabase)
+- Production API routes (`/api/booking`, `/api/bookings`) are wired to Supabase via the REST API. Local dev continues to use the Node server at `:8787` which persists to a JSON file.
+- Create a table `bookings` in your Supabase project (SQL below) and set env vars in Vercel:
+  - `SUPABASE_URL`
+  - `SUPABASE_SERVICE_ROLE_KEY` (server-only; never exposed to the browser)
+
+SQL to create the table and index:
+
+```
+CREATE TABLE IF NOT EXISTS bookings (
+  id                text PRIMARY KEY,
+  status            text NOT NULL DEFAULT 'confirmed',
+  source            text NOT NULL DEFAULT 'voice',
+  created_at        timestamptz NOT NULL DEFAULT now(),
+  venue             text NOT NULL DEFAULT 'The Rug Café',
+  date              date NOT NULL,
+  time              time NOT NULL,
+  party_size        integer NOT NULL,
+  name              text NOT NULL,
+  email             text,
+  phone             text,
+  special_requests  text
+);
+
+CREATE INDEX IF NOT EXISTS idx_bookings_date_time ON bookings (date, time);
+```
+
+Notes
+- The serverless functions use the service role key and parameterized REST calls. RLS can be enabled; the service role bypasses RLS.
+- The Admin Bookings dashboard reads from `/api/bookings` and expects camelCase fields; the API maps DB fields accordingly.
