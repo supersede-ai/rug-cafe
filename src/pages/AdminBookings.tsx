@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import Layout from '@/components/Layout';
 import { useQuery } from '@tanstack/react-query';
+import supabase from '@/utils/supabase';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -32,13 +33,33 @@ function toDateTime(b: Booking) {
   return new Date(y, (m || 1) - 1, d || 1, hh || 0, mm || 0, 0, 0);
 }
 
+function toOutRow(row: any): Booking {
+  return {
+    id: row.id,
+    status: row.status || 'confirmed',
+    source: row.source || 'voice',
+    createdAt: row.created_at,
+    venue: row.venue || 'The Rug Café',
+    date: String(row.date),
+    time: String(row.time).slice(0, 5),
+    partySize: Number(row.party_size),
+    name: String(row.name),
+    email: row.email ?? null,
+    phone: row.phone ?? null,
+    specialRequests: row.special_requests ?? null,
+  };
+}
+
 const fetchBookings = async (): Promise<BookingResponse> => {
-  const r = await fetch('/api/bookings');
-  if (!r.ok) {
-    const text = await r.text();
-    throw new Error(text || `Failed to load bookings (${r.status})`);
-  }
-  return r.json();
+  const { data, error, count } = await supabase
+    .from('bookings')
+    .select('*', { count: 'exact' })
+    .order('date', { ascending: true })
+    .order('time', { ascending: true });
+
+  if (error) throw new Error(error.message || 'Failed to load bookings');
+  const items = (data || []).map(toOutRow);
+  return { total: count ?? items.length, items };
 };
 
 const StatCard: React.FC<{ title: string; value: string | number; sub?: string }> = ({ title, value, sub }) => (
@@ -197,4 +218,3 @@ const AdminBookings: React.FC = () => {
 };
 
 export default AdminBookings;
-
