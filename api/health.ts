@@ -7,7 +7,7 @@ export default async function handler(req: any, res: any) {
 
   try {
     // Minimal query that should succeed; limit rows to 1
-    const supabase = getServiceClient();
+    const supabase = await getServiceClient();
     const { data, error, status } = await supabase
       .from('bookings')
       .select('id')

@@ -15,7 +15,7 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
-    const supabase = getServiceClient();
+    const supabase = await getServiceClient();
     const { data, error, count, status } = await supabase
       .from('bookings')
       .select('*', { count: 'exact' })

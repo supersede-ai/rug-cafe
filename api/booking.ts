@@ -48,7 +48,7 @@ export default async function handler(req: any, res: any) {
   const timeDb = toHHMM(String(time)) + ':00';
 
   try {
-    const supabase = getServiceClient();
+    const supabase = await getServiceClient();
     const insertRow = {
       id,
       status: 'confirmed',
