@@ -21,25 +21,28 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
-    // Fetch up to 500 rows, ordered by date then time, with an accurate total count
-    const r = await supaFetch('/bookings?select=*&order=date.asc,time.asc', {
+    // Simpler request: avoid Range header to reduce edge-case issues.
+    const r = await supaFetch('/bookings', {
       method: 'GET',
-      headers: supabaseHeaders({ 'Prefer': 'count=exact', Range: '0-499' }),
+      headers: supabaseHeaders({ 'Prefer': 'count=exact' }),
+      searchParams: { select: '*', order: 'date.asc,time.asc' },
     });
 
     if (!r.ok) {
       let text = '';
       try { text = await r.text(); } catch {}
-      res.status(r.status || 500).json({ error: 'db_list_failed', details: text || `status ${r.status}` });
+      console.error('[api/bookings] Supabase error', r.status, text);
+      res.status(r.status || 500).json({ error: 'db_list_failed', status: r.status, details: text || `status ${r.status}` });
       return;
     }
 
     const itemsRaw = await r.json();
-    const contentRange = r.headers.get('content-range') || '*/0';
-    const total = parseContentRangeTotal(contentRange);
+    const contentRange = r.headers.get('content-range');
+    const total = contentRange ? parseContentRangeTotal(contentRange) : (Array.isArray(itemsRaw) ? itemsRaw.length : 0);
     const items = (itemsRaw as any[]).map(toOutRow);
     res.status(200).json({ total, items });
   } catch (err: any) {
+    console.error('[api/bookings] Handler error', err);
     res.status(500).json({ error: 'db_error', details: String(err) });
   }
 }
