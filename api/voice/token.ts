@@ -1,5 +1,6 @@
 // Vercel Serverless Function: Mint an ephemeral token for the OpenAI Realtime API.
 // Never expose your standard OPENAI_API_KEY to the browser.
+import { serverFetch } from '../_fetch';
 
 export default async function handler(req: any, res: any) {
   if (req.method === 'OPTIONS') {
@@ -26,7 +27,7 @@ export default async function handler(req: any, res: any) {
   };
 
   try {
-    const r = await fetch('https://api.openai.com/v1/realtime/client_secrets', {
+    const r = await serverFetch('https://api.openai.com/v1/realtime/client_secrets', {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${apiKey}`,
