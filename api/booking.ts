@@ -1,7 +1,8 @@
 // Vercel Serverless Function: Create a booking for The Rug Café
 // Production path persists to Supabase via REST. Local dev keeps using server/index.js via Vite proxy.
 
-import { ensureSupabaseConfigured, supaFetch, supabaseHeaders, toHHMM } from './_supabase';
+import { toHHMM } from './_supabase';
+import { getServiceClient } from './_supabase_client';
 
 export default async function handler(req: any, res: any) {
   if (req.method === 'OPTIONS') {
@@ -42,66 +43,52 @@ export default async function handler(req: any, res: any) {
     return;
   }
 
-  // If Supabase env is missing, indicate not configured (keeps local dev safe)
-  try {
-    ensureSupabaseConfigured();
-  } catch (e: any) {
-    res.status(501).json({ error: 'supabase_not_configured', message: e?.message || String(e) });
-    return;
-  }
-
   // Normalize and insert
   const id = `rug_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
   const timeDb = toHHMM(String(time)) + ':00';
 
   try {
-    const insRes = await supaFetch('/bookings', {
-      method: 'POST',
-      headers: supabaseHeaders({ 'Prefer': 'return=representation' }),
-      body: JSON.stringify({
-        id,
-        status: 'confirmed',
-        source: 'voice',
-        venue: 'The Rug Café',
-        date: String(date),
-        time: timeDb,
-        party_size: Number(partySize),
-        name: String(name),
-        email: email || null,
-        phone: phone || null,
-        special_requests: specialRequests || null,
-      }),
-      // No searchParams; PostgREST returns the inserted row because of Prefer header
-    });
+    const supabase = getServiceClient();
+    const insertRow = {
+      id,
+      status: 'confirmed',
+      source: 'voice',
+      venue: 'The Rug Café',
+      date: String(date),
+      time: timeDb,
+      party_size: Number(partySize),
+      name: String(name),
+      email: email || null,
+      phone: phone || null,
+      special_requests: specialRequests || null,
+    } as const;
 
-    if (!insRes.ok) {
-      let text = '';
-      try { text = await insRes.text(); } catch {}
-      res.status(insRes.status || 500).json({ error: 'db_insert_failed', details: text || `status ${insRes.status}` });
-      return;
-    }
+    const { data, error, status } = await supabase
+      .from('bookings')
+      .insert(insertRow)
+      .select('*')
+      .limit(1)
+      .single();
 
-    const rows = (await insRes.json()) as any[];
-    const row = rows && rows[0];
-    if (!row) {
-      res.status(500).json({ error: 'db_insert_no_row' });
+    if (error) {
+      res.status(status || 500).json({ error: 'db_insert_failed', details: error.message });
       return;
     }
 
     // Shape response to match local dev server record shape
     const out = {
-      id: row.id,
-      status: row.status || 'confirmed',
-      source: row.source || 'voice',
-      createdAt: row.created_at || new Date().toISOString(),
-      venue: row.venue || 'The Rug Café',
-      date: String(row.date),
-      time: toHHMM(String(row.time)),
-      partySize: Number(row.party_size),
-      name: String(row.name),
-      email: row.email ?? null,
-      phone: row.phone ?? null,
-      specialRequests: row.special_requests ?? null,
+      id: data.id,
+      status: data.status || 'confirmed',
+      source: data.source || 'voice',
+      createdAt: data.created_at || new Date().toISOString(),
+      venue: data.venue || 'The Rug Café',
+      date: String(data.date),
+      time: toHHMM(String(data.time)),
+      partySize: Number(data.party_size),
+      name: String(data.name),
+      email: data.email ?? null,
+      phone: data.phone ?? null,
+      specialRequests: data.special_requests ?? null,
     };
 
     res.status(200).json(out);

@@ -1,7 +1,8 @@
 // Vercel Serverless Function: List bookings (Supabase)
 // Production path queries Supabase via REST. Local dev uses server/index.js via Vite proxy.
 
-import { ensureSupabaseConfigured, supaFetch, supabaseHeaders, toHHMM } from './_supabase';
+import { toHHMM } from './_supabase';
+import { getServiceClient } from './_supabase_client';
 
 export default async function handler(req: any, res: any) {
   if (req.method === 'OPTIONS') {
@@ -14,36 +15,24 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
-    ensureSupabaseConfigured();
-  } catch (e: any) {
-    res.status(501).json({ error: 'supabase_not_configured', message: e?.message || String(e) });
-    return;
-  }
+    const supabase = getServiceClient();
+    const { data, error, count, status } = await supabase
+      .from('bookings')
+      .select('*', { count: 'exact' })
+      .order('date', { ascending: true })
+      .order('time', { ascending: true });
 
-  try {
-    // Simpler request: avoid Range header to reduce edge-case issues.
-    const r = await supaFetch('/bookings', {
-      method: 'GET',
-      headers: supabaseHeaders({ 'Prefer': 'count=exact' }),
-      searchParams: { select: '*', order: 'date.asc,time.asc' },
-    });
-
-    if (!r.ok) {
-      let text = '';
-      try { text = await r.text(); } catch {}
-      console.error('[api/bookings] Supabase error', r.status, text);
-      res.status(r.status || 500).json({ error: 'db_list_failed', status: r.status, details: text || `status ${r.status}` });
+    if (error) {
+      console.error('[api/bookings] Supabase error', status, error);
+      res.status(status || 500).json({ error: 'db_list_failed', status, details: error.message });
       return;
     }
 
-    const itemsRaw = await r.json();
-    const contentRange = r.headers.get('content-range');
-    const total = contentRange ? parseContentRangeTotal(contentRange) : (Array.isArray(itemsRaw) ? itemsRaw.length : 0);
-    const items = (itemsRaw as any[]).map(toOutRow);
-    res.status(200).json({ total, items });
+    const items = (data || []).map(toOutRow);
+    res.status(200).json({ total: count ?? items.length, items });
   } catch (err: any) {
     console.error('[api/bookings] Handler error', err);
-    res.status(500).json({ error: 'db_error', details: String(err) });
+    res.status(500).json({ error: 'db_error', details: String(err?.message || err) });
   }
 }
 
