@@ -26,5 +26,19 @@
     "email": "sim@test.com",
     "phone": null,
     "specialRequests": "Large table requested"
+  },
+  {
+    "id": "rug_mfcg8yj0_p1ho",
+    "status": "confirmed",
+    "source": "voice",
+    "createdAt": "2025-09-09T11:10:31.116Z",
+    "venue": "The Rug Café",
+    "date": "2025-09-09",
+    "time": "17:00",
+    "partySize": 2,
+    "name": "Sanchita Ferrari",
+    "email": "sanchita@ferrari.com",
+    "phone": null,
+    "specialRequests": null
   }
 ]

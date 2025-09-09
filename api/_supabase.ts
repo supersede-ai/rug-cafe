@@ -20,12 +20,19 @@ export function supabaseHeaders(extra?: Record<string, string>) {
 }
 
 export async function supaFetch(path: string, init: RequestInit & { searchParams?: Record<string, string> } = {}) {
-  const base = `${SUPABASE_URL}/rest/v1`;
-  const url = new URL(path.startsWith('/') ? path : `/${path}`, base);
+  // Ensure base ends with /rest/v1/ and that path is relative (no leading slash)
+  const base = new URL('/rest/v1/', SUPABASE_URL);
+  const rel = String(path).replace(/^\/+/, '');
+  const url = new URL(rel, base);
   if ((init as any).searchParams) {
     const sp = (init as any).searchParams as Record<string, string>;
     for (const [k, v] of Object.entries(sp)) url.searchParams.set(k, v);
   }
+  // Ensure sensible defaults
+  init.headers = {
+    Accept: 'application/json',
+    ...(init.headers as any),
+  } as any;
   const res = await fetch(url.toString(), init);
   return res;
 }
@@ -36,4 +43,3 @@ export function toHHMM(time: string | null | undefined) {
   const m = String(time).match(/^(\d{2}:\d{2})(?::\d{2})?(?:[.+-].*)?$/);
   return m ? m[1] : String(time).slice(0, 5);
 }
-
