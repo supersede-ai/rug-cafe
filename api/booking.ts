@@ -1,8 +1,5 @@
 // Vercel Serverless Function: Create a booking for The Rug Café
-// Production path persists to Supabase via REST. Local dev keeps using server/index.js via Vite proxy.
-
-import { toHHMM } from './_supabase';
-import { getServiceClient } from './_supabase_client';
+// Self-contained to avoid ESM/CJS resolution issues in serverless builds.
 
 export default async function handler(req: any, res: any) {
   if (req.method === 'OPTIONS') {
@@ -95,6 +92,23 @@ export default async function handler(req: any, res: any) {
   } catch (err: any) {
     res.status(500).json({ error: 'db_error', details: String(err) });
   }
+}
+
+// Local helpers (no cross-file imports)
+function toHHMM(time: string | null | undefined) {
+  if (!time) return '';
+  const m = String(time).match(/^(\d{2}:\d{2})(?::\d{2})?(?:[.+-].*)?$/);
+  return m ? m[1] : String(time).slice(0, 5);
+}
+
+async function getServiceClient() {
+  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+  if (!url) throw new Error('SUPABASE_URL missing');
+  if (!/^https?:\/\//i.test(url)) throw new Error('SUPABASE_URL must start with http(s)://');
+  if (!key) throw new Error('Supabase key missing (SUPABASE_SERVICE_ROLE_KEY)');
+  const { createClient } = await import('@supabase/supabase-js');
+  return createClient(url, key, { auth: { persistSession: false }, global: { headers: { 'x-application-name': 'rug-cafe' } } });
 }
 
 async function parseJson(req: any) {
