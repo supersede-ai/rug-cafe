@@ -19,6 +19,8 @@ cd <YOUR_PROJECT_NAME>
 npm install
 cp .env.example .env
 # edit .env and set OPENAI_API_KEY=<your_key>
+# optional (required to log voice analytics in local dev):
+# set SUPABASE_URL=... and SUPABASE_SERVICE_ROLE_KEY=...
 ```
 
 Run (two terminals)
@@ -81,3 +83,51 @@ CREATE INDEX IF NOT EXISTS idx_bookings_date_time ON bookings (date, time);
 Notes
 - The serverless functions use the service role key and parameterized REST calls. RLS can be enabled; the service role bypasses RLS.
 - The Admin Bookings dashboard reads from `/api/bookings` and expects camelCase fields; the API maps DB fields accordingly.
+
+### Voice Analytics (User Actions + Ratings)
+
+Create the `voice_sessions` table to track per-session actions from the voice assistant. This records how many times a user added items to the basket, how many bookings were created via the bot, and an end-of-session rating.
+
+SQL:
+
+```
+CREATE EXTENSION IF NOT EXISTS pgcrypto; -- for gen_random_uuid()
+
+CREATE TABLE IF NOT EXISTS voice_sessions (
+  id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  created_at         timestamptz NOT NULL DEFAULT now(),
+  session_id         text NOT NULL UNIQUE,
+  user_agent         text,
+  started_at         timestamptz DEFAULT now(),
+  ended_at           timestamptz,
+  basket_add_count   integer NOT NULL DEFAULT 0,
+  booking_count      integer NOT NULL DEFAULT 0,
+  rating             smallint CHECK (rating BETWEEN 1 AND 5)
+);
+
+-- Recommended for data hygiene (code no longer depends on this)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_voice_sessions_session_id
+  ON voice_sessions (session_id);
+
+-- Optional: enable RLS. Service role bypasses RLS.
+ALTER TABLE voice_sessions ENABLE ROW LEVEL SECURITY;
+```
+
+Integration:
+- Client generates a `sessionId` when the voice session starts, then posts events to `/api/voice/actions`.
+- Events are upserted into `voice_sessions` and counters are incremented server-side.
+- The agent asks for a rating (1–5) at the end and posts it via the `record_rating` tool.
+
+Verify:
+- Start a voice session, add basket items, make a booking, end the conversation with a rating.
+- Inspect rows in `voice_sessions` for `basket_add_count`, `booking_count`, and `rating`.
+
+Troubleshooting
+- If you see 400 from `/api/voice/actions` in dev, your table may be missing or columns differ. Run:
+  - `ALTER TABLE voice_sessions ADD COLUMN IF NOT EXISTS basket_add_count integer NOT NULL DEFAULT 0;`
+  - `ALTER TABLE voice_sessions ADD COLUMN IF NOT EXISTS booking_count integer NOT NULL DEFAULT 0;`
+  - `ALTER TABLE voice_sessions ADD COLUMN IF NOT EXISTS rating smallint;`
+  - `ALTER TABLE voice_sessions ADD COLUMN IF NOT EXISTS user_agent text;`
+  - `ALTER TABLE voice_sessions ADD COLUMN IF NOT EXISTS started_at timestamptz;`
+  - `ALTER TABLE voice_sessions ADD COLUMN IF NOT EXISTS ended_at timestamptz;`
+- Ensure local `.env` includes `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` and restart `npm run voice:server`.

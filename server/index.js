@@ -7,6 +7,7 @@ import http from 'http';
 import { URL, fileURLToPath } from 'url';
 import path from 'path';
 import { promises as fs } from 'fs';
+import { createClient } from '@supabase/supabase-js';
 
 const PORT_ENV = Number(process.env.PORT) || 8787;
 
@@ -90,6 +91,10 @@ const server = http.createServer(async (req, res) => {
     const url = new URL(req.url || '', `http://${req.headers.host}`);
     if (req.method === 'GET' && url.pathname === '/api/voice/token') {
       await handleToken(req, res);
+      return;
+    }
+    if (req.method === 'POST' && url.pathname === '/api/voice/actions') {
+      await handleVoiceActions(req, res);
       return;
     }
     if (req.method === 'GET' && url.pathname === '/api/health') {
@@ -214,3 +219,133 @@ listenWithFallback(server, PORT_ENV).catch((err) => {
   console.error('[voice-token-server] failed to start', err);
   process.exit(1);
 });
+
+// ---- Voice actions → Supabase logging (local dev path) ----
+async function handleVoiceActions(req, res) {
+  try {
+    let raw = '';
+    req.on('data', (c) => (raw += c));
+    req.on('end', async () => {
+      try {
+        const body = raw ? JSON.parse(raw) : {};
+        const action = String(body?.action || '').toLowerCase();
+        const sessionId = String(body?.sessionId || body?.session_id || '').trim();
+        const delta = Number.isFinite(Number(body?.delta)) ? Number(body?.delta) : 1;
+        const rating = Number(body?.rating);
+        if (!sessionId) return sendJson(res, 400, { error: 'missing_session_id' });
+        if (!['session_start', 'add_to_basket', 'booking_created', 'rating', 'session_end'].includes(action)) {
+          return sendJson(res, 400, { error: 'invalid_action' });
+        }
+        if (action === 'rating' && !(rating >= 1 && rating <= 5)) {
+          return sendJson(res, 400, { error: 'invalid_rating', details: 'rating must be 1..5' });
+        }
+
+        const supabase = getServiceClient();
+
+        if (action === 'session_start') {
+          const now = new Date().toISOString();
+          const ua = String(req.headers['user-agent'] || '');
+          const { data: existing, error: selErr, status: selStatus } = await supabase
+            .from('voice_sessions')
+            .select('session_id')
+            .eq('session_id', sessionId)
+            .limit(1)
+            .maybeSingle();
+          if (selErr && selStatus !== 406) {
+            return sendJson(res, selStatus || 500, { error: 'db_select_failed', details: selErr.message });
+          }
+          if (!existing) {
+            const { error, status } = await supabase
+              .from('voice_sessions')
+              .insert({ session_id: sessionId, user_agent: ua, started_at: now });
+            if (error) return sendJson(res, status || 500, { error: 'db_insert_failed', details: error.message });
+          } else {
+            const { error, status } = await supabase
+              .from('voice_sessions')
+              .update({ user_agent: ua, started_at: now })
+              .eq('session_id', sessionId);
+            if (error) return sendJson(res, status || 500, { error: 'db_update_failed', details: error.message });
+          }
+          return sendJson(res, 200, { ok: true });
+        }
+
+        const { data: existing, error: selErr, status: selStatus } = await supabase
+          .from('voice_sessions')
+          .select('*')
+          .eq('session_id', sessionId)
+          .limit(1)
+          .maybeSingle();
+        if (selErr && selStatus !== 406) {
+          return sendJson(res, selStatus || 500, { error: 'db_select_failed', details: selErr.message });
+        }
+        const base = existing || { session_id: sessionId, basket_add_count: 0, booking_count: 0 };
+
+        if (action === 'add_to_basket') {
+          const next = {
+            session_id: sessionId,
+            basket_add_count: Number(base.basket_add_count || 0) + Math.max(1, delta),
+          };
+          const { error, status } = existing
+            ? await supabase.from('voice_sessions').update(next).eq('session_id', sessionId)
+            : await supabase.from('voice_sessions').insert(next);
+          if (error) return sendJson(res, status || 500, { error: 'db_upsert_failed', details: error.message });
+          return sendJson(res, 200, { ok: true, basket_add_count: next.basket_add_count });
+        }
+
+        if (action === 'booking_created') {
+          const next = {
+            session_id: sessionId,
+            booking_count: Number(base.booking_count || 0) + Math.max(1, delta),
+          };
+          const { error, status } = existing
+            ? await supabase.from('voice_sessions').update(next).eq('session_id', sessionId)
+            : await supabase.from('voice_sessions').insert(next);
+          if (error) return sendJson(res, status || 500, { error: 'db_upsert_failed', details: error.message });
+          return sendJson(res, 200, { ok: true, booking_count: next.booking_count });
+        }
+
+        if (action === 'rating') {
+          const patch = {
+            session_id: sessionId,
+            rating: rating,
+            ended_at: new Date().toISOString(),
+          };
+          const { error, status } = existing
+            ? await supabase.from('voice_sessions').update(patch).eq('session_id', sessionId)
+            : await supabase.from('voice_sessions').insert(patch);
+          if (error) return sendJson(res, status || 500, { error: 'db_upsert_failed', details: error.message });
+          return sendJson(res, 200, { ok: true });
+        }
+
+        if (action === 'session_end') {
+          const patch = { session_id: sessionId, ended_at: new Date().toISOString() };
+          const { error, status } = existing
+            ? await supabase.from('voice_sessions').update(patch).eq('session_id', sessionId)
+            : await supabase.from('voice_sessions').insert(patch);
+          if (error) return sendJson(res, status || 500, { error: 'db_upsert_failed', details: error.message });
+          return sendJson(res, 200, { ok: true });
+        }
+
+        return sendJson(res, 400, { error: 'unhandled_action' });
+      } catch (e) {
+        return sendJson(res, 400, { error: 'invalid_json', details: String(e) });
+      }
+    });
+  } catch (err) {
+    return sendJson(res, 500, { error: 'server_error', details: String(err) });
+  }
+}
+
+function getServiceClient() {
+  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+  if (!url) throw new Error('SUPABASE_URL missing');
+  if (!/^https?:\/\//i.test(url)) throw new Error('SUPABASE_URL must start with http(s)://');
+  if (!key) throw new Error('Supabase key missing (SUPABASE_SERVICE_ROLE_KEY)');
+  return createClient(url, key, { auth: { persistSession: false }, global: { headers: { 'x-application-name': 'rug-cafe-dev' } } });
+}
+
+function sendJson(res, status, body) {
+  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(body));
+}

@@ -19,6 +19,7 @@ export class VoiceAssistantClient {
   private opts: Required<VoiceAssistantOptions>;
   private agent?: RealtimeAgent;
   private session?: RealtimeSession;
+  private sessionId: string = '';
 
   constructor(opts: VoiceAssistantOptions = {}) {
     this.opts = {
@@ -86,6 +87,9 @@ export class VoiceAssistantClient {
       console.log('VoiceAssistantClient: Token response:', tokenJson);
       const ephemeral = tokenJson?.value || tokenJson?.client_secret?.value;
       if (!ephemeral) throw new Error('No ephemeral key returned');
+      this.sessionId = this.makeSessionId();
+      const log = (action: string, extra: Record<string, any> = {}) => this.logAction(action, extra);
+      try { await log('session_start'); } catch {}
       // Build instructions with a page snapshot for grounded answers
       const pageText = this.safeClip(document.body?.innerText || '', 6000);
       // Build a compact product catalogue to ground shopping queries
@@ -105,6 +109,7 @@ export class VoiceAssistantClient {
         '- Keep answers concise and friendly.',
         '- When a guest wants a reservation, gather date, time, party size, name, and at least one contact (email or phone). Confirm details aloud, then call the book_table tool.',
         '- When a guest asks to buy/add coffee, resolve which product from the catalogue they want and call add_to_basket. If you are uncertain which item, clarify before adding.',
+        '- When the conversation wraps up, ask the guest to rate the assistant from 1 to 5, then call record_rating with that number.',
       ].join('\n');
 
       // Initialize SDK agent + session
@@ -146,7 +151,9 @@ export class VoiceAssistantClient {
             try { text = await res.text(); } catch {}
             throw new Error(`Booking failed: ${res.status}${text ? ` - ${text}` : ''}`);
           }
-          return await res.json();
+          const out = await res.json();
+          try { await log('booking_created'); } catch {}
+          return out;
         },
       });
 
@@ -184,6 +191,8 @@ export class VoiceAssistantClient {
             );
             added.push({ id: product.id, name: product.name, quantity: it.quantity || 1, price: product.priceFrom });
           }
+          const addedCount = (items || []).reduce((acc, it) => acc + Math.max(1, Number(it.quantity || 1)), 0);
+          try { await log('add_to_basket', { delta: Math.max(1, addedCount || 1) }); } catch {}
           return {
             added,
             notFound,
@@ -193,10 +202,23 @@ export class VoiceAssistantClient {
         },
       });
 
+      const recordRatingTool = tool({
+        name: 'record_rating',
+        description: 'Record a user rating (1-5) for the voice assistant at the end of the conversation. Ask the guest first, then call this.',
+        strict: true,
+        parameters: z.object({
+          rating: z.number().int().min(1).max(5).describe('User rating from 1 to 5'),
+        }),
+        async execute({ rating }) {
+          await log('rating', { rating });
+          return { ok: true } as any;
+        },
+      });
+
       this.agent = new RealtimeAgent({
         name: 'Rug Assistant',
         instructions,
-        tools: [bookTableTool, addToBasketTool],
+        tools: [bookTableTool, addToBasketTool, recordRatingTool],
         voice: this.opts.voice,
       });
       this.session = new RealtimeSession(this.agent);
@@ -234,10 +256,37 @@ export class VoiceAssistantClient {
     this.session = undefined;
     this.agent = undefined;
     this.started = false;
+    try { if (this.sessionId) await this.logAction('session_end'); } catch {}
     this.opts.onStatus('stopped');
   }
 
   private safeClip(text: string, limit: number) {
     return text.length > limit ? text.slice(0, limit) + '\n…' : text;
+  }
+
+  private makeSessionId() {
+    try {
+      const v = (globalThis as any).crypto?.randomUUID?.();
+      if (v) return v;
+    } catch {}
+    return `vs_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  private async logAction(action: string, extra: Record<string, any> = {}) {
+    if (!this.sessionId) return;
+    try {
+      const res = await fetch('/api/voice/actions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, sessionId: this.sessionId, ...extra }),
+      });
+      if (!res.ok) {
+        // Non-fatal: keep UX smooth but surface a console hint for devs
+        const txt = await res.text().catch(() => '');
+        console.warn('[voice] logAction failed', action, res.status, txt);
+      }
+    } catch (e) {
+      // Swallow network errors silently to avoid interrupting the session
+    }
   }
 }
