@@ -2,6 +2,8 @@
 // Keeps the same simple start/stop/status surface for reuse across sites.
 import { RealtimeAgent, RealtimeSession, tool } from '@openai/agents/realtime';
 import * as z from 'zod';
+import { COFFEE_PRODUCTS, findProduct } from '@/data/products';
+import * as Cart from '@/lib/cart';
 
 export type VoiceAssistantOptions = {
   tokenUrl?: string; // Defaults to '/api/voice/token'
@@ -86,16 +88,23 @@ export class VoiceAssistantClient {
       if (!ephemeral) throw new Error('No ephemeral key returned');
       // Build instructions with a page snapshot for grounded answers
       const pageText = this.safeClip(document.body?.innerText || '', 6000);
+      // Build a compact product catalogue to ground shopping queries
+      const catalogueLines = COFFEE_PRODUCTS.map(p => `- ${p.name} [${p.category}] — notes: ${p.notes}; from £${p.priceFrom.toFixed(2)}`).join('\n');
+
       const instructions = [
         this.opts.instructions,
         '',
         'Context (page snapshot):',
         pageText,
         '',
+        'Rug Coffee Catalogue:',
+        catalogueLines,
+        '',
         'Guidelines:',
         '- If unsure, say so and direct to Menu or Hours.',
         '- Keep answers concise and friendly.',
         '- When a guest wants a reservation, gather date, time, party size, name, and at least one contact (email or phone). Confirm details aloud, then call the book_table tool.',
+        '- When a guest asks to buy/add coffee, resolve which product from the catalogue they want and call add_to_basket. If you are uncertain which item, clarify before adding.',
       ].join('\n');
 
       // Initialize SDK agent + session
@@ -141,10 +150,53 @@ export class VoiceAssistantClient {
         },
       });
 
+      // Shopping basket tool (adds items to local cart)
+      const addToBasketTool = tool({
+        name: 'add_to_basket',
+        description:
+          'Add one or more coffee products to the shopping basket. Use when a guest asks to buy/put coffee in their bag. Match names to the Rug Coffee Catalogue.',
+        strict: true,
+        parameters: z.object({
+          items: z
+            .array(
+              z.object({
+                product: z
+                  .string()
+                  .describe('Product name or id, e.g., "Resolute House Blend" or "resolute-blend"'),
+                quantity: z.number().int().min(1).max(10).default(1).describe('How many to add'),
+              })
+            )
+            .min(1)
+            .describe('List of items to add'),
+        }),
+        async execute({ items }) {
+          const added: any[] = [];
+          const notFound: any[] = [];
+          for (const it of items) {
+            const product = findProduct(it.product);
+            if (!product) {
+              notFound.push({ query: it.product });
+              continue;
+            }
+            Cart.add(
+              { id: product.id, name: product.name, price: product.priceFrom, image: product.image },
+              it.quantity || 1,
+            );
+            added.push({ id: product.id, name: product.name, quantity: it.quantity || 1, price: product.priceFrom });
+          }
+          return {
+            added,
+            notFound,
+            count: Cart.count(),
+            total: Cart.total(),
+          };
+        },
+      });
+
       this.agent = new RealtimeAgent({
         name: 'Rug Assistant',
         instructions,
-        tools: [bookTableTool],
+        tools: [bookTableTool, addToBasketTool],
         voice: this.opts.voice,
       });
       this.session = new RealtimeSession(this.agent);

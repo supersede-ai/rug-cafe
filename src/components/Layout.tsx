@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import '../styles/logo-animations.css';
 import VoiceAssistantButton from '@/components/VoiceAssistantButton';
+import CartSheet from '@/components/CartSheet';
 
 type LayoutProps = {
   children: React.ReactNode;
@@ -59,35 +60,27 @@ const Layout = ({ children, transparentHeader = false }: LayoutProps) => {
               style={{ animationDelay: '200ms', animationFillMode: 'forwards' }}
             />
           </Link>
-          <nav className="hidden md:flex space-x-8 lg:space-x-12 items-center">
-            <Link to="/" className="hover:text-[#E3833B] transition-colors text-xl font-medium px-3 py-2 relative group">
-              Home
-              <span className="absolute inset-x-0 bottom-0 h-0.5 bg-[#E3833B] scale-x-0 group-hover:scale-x-100 transition-transform duration-300"></span>
-            </Link>
-            <Link to="/menu" className="hover:text-[#E3833B] transition-colors text-xl font-medium px-3 py-2 relative group">
-              Menu
-              <span className="absolute inset-x-0 bottom-0 h-0.5 bg-[#E3833B] scale-x-0 group-hover:scale-x-100 transition-transform duration-300"></span>
-            </Link>
-            <Link to="/about" className="hover:text-[#E3833B] transition-colors text-xl font-medium px-3 py-2 relative group">
-              About
-              <span className="absolute inset-x-0 bottom-0 h-0.5 bg-[#E3833B] scale-x-0 group-hover:scale-x-100 transition-transform duration-300"></span>
-            </Link>
-            <Link to="/book" className="bg-[#E3833B] text-white px-8 py-4 rounded-full hover:bg-opacity-90 hover:shadow-lg transition-all duration-300 transform hover:scale-105 font-bold text-lg">
-              Book a Table
-            </Link>
-            <Link
-              to="/admin/bookings"
-              className="border-2 border-[#514640] text-[#514640] px-6 py-3 rounded-full hover:bg-[#514640] hover:text-white transition-all duration-300 font-semibold text-lg"
-              aria-label="Go to Admin Bookings"
-            >
-              Admin Bookings
-            </Link>
+          <nav className="hidden md:flex items-center w-full">
+            {/* Right: actions */}
+            <div className="flex items-center gap-4 lg:gap-6 ml-auto pr-1">
+              <CartSheet />
+              <Link to="/book" className="bg-[#E3833B] text-white px-6 py-3 rounded-full hover:bg-opacity-90 hover:shadow-lg transition-all duration-300 transform hover:scale-105 font-bold text-base whitespace-nowrap">
+                Book a Table
+              </Link>
+              <Link
+                to="/admin/bookings"
+                className="border-2 border-[#514640] text-[#514640] px-5 py-2.5 rounded-full hover:bg-[#514640] hover:text-white transition-all duration-300 font-semibold text-base whitespace-nowrap"
+                aria-label="Go to Admin Bookings"
+              >
+                Admin Bookings
+              </Link>
+            </div>
           </nav>
 
-          {/* Mobile menu button */}
+          {/* Collapsible menu button (shown on all breakpoints) */}
           <button
             ref={mobileMenuButtonRef}
-            className="md:hidden p-3 focus:outline-none touch-manipulation"
+            className="p-3 focus:outline-none touch-manipulation"
             aria-label="Open menu"
             onClick={toggleMobileMenu}
             aria-expanded={isMobileMenuOpen}
@@ -97,18 +90,20 @@ const Layout = ({ children, transparentHeader = false }: LayoutProps) => {
             </svg>
           </button>
 
-          {/* Mobile nav dropdown - Improved Styling */}
+          {/* Collapsible nav dropdown - used on all sizes */}
           <div
             ref={mobileMenuRef}
             id="mobileNav"
-            className={`md:hidden absolute top-full right-0 mt-3 w-64 bg-white rounded-2xl shadow-2xl py-4 flex flex-col z-50 border border-[#514640]/10 ${isMobileMenuOpen ? 'block' : 'hidden'}`}
+            className={`absolute top-full right-0 mt-3 w-64 bg-white rounded-2xl shadow-2xl py-4 flex flex-col z-50 border border-[#514640]/10 ${isMobileMenuOpen ? 'block' : 'hidden'}`}
             tabIndex={-1}
             aria-label="Mobile navigation menu"
             aria-hidden={!isMobileMenuOpen}
           >
-            <Link to="/" className="block px-6 py-4 text-xl font-medium hover:bg-[#F4EFE9] hover:text-[#E3833B] transition-colors touch-manipulation" onClick={closeMobileMenu}>Home</Link>
-            <Link to="/menu" className="block px-6 py-4 text-xl font-medium hover:bg-[#F4EFE9] hover:text-[#E3833B] transition-colors touch-manipulation" onClick={closeMobileMenu}>Menu</Link>
-            <Link to="/about" className="block px-6 py-4 text-xl font-medium hover:bg-[#F4EFE9] hover:text-[#E3833B] transition-colors touch-manipulation" onClick={closeMobileMenu}>About</Link>
+            <Link to="/" className="block px-6 py-4 text-lg font-medium hover:bg-[#F4EFE9] hover:text-[#E3833B] transition-colors touch-manipulation" onClick={closeMobileMenu}>Home</Link>
+            <Link to="/menu" className="block px-6 py-4 text-lg font-medium hover:bg-[#F4EFE9] hover:text-[#E3833B] transition-colors touch-manipulation" onClick={closeMobileMenu}>Menu</Link>
+            <Link to="/coffee" className="block px-6 py-4 text-lg font-medium hover:bg-[#F4EFE9] hover:text-[#E3833B] transition-colors touch-manipulation" onClick={closeMobileMenu}>Buy Coffee</Link>
+            <Link to="/about" className="block px-6 py-4 text-lg font-medium hover:bg-[#F4EFE9] hover:text-[#E3833B] transition-colors touch-manipulation" onClick={closeMobileMenu}>About</Link>
+            <div className="px-6 py-4"><CartSheet /></div>
             <Link 
               to="/book" 
               className="block mt-3 mx-6 mb-2 bg-[#E3833B] text-white px-8 py-4 text-center rounded-full hover:bg-opacity-90 hover:shadow-lg transition-all duration-300 font-bold text-lg touch-manipulation"

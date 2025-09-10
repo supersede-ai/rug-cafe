@@ -121,6 +121,15 @@ const Index = () => {
               </Link>
               
               <Link 
+                to="/coffee" 
+                className="border-2 border-[#E3833B] text-[#E3833B] px-12 py-5 
+                  rounded-full hover:bg-[#E3833B] hover:text-white hover:shadow-xl transition-all duration-300 
+                  transform hover:scale-105 font-bold text-xl ripple-effect"
+              >
+                Buy Coffee
+              </Link>
+
+              <Link 
                 to="/menu" 
                 className="border-2 border-[#514640] text-[#514640] px-12 py-5 
                   rounded-full hover:bg-[#514640] hover:text-white hover:shadow-xl transition-all duration-300 

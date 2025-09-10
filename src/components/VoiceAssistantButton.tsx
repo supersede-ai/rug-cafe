@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { VoiceAssistantClient } from '@/modules/voice-assistant/client';
 
 type Props = {
@@ -46,16 +47,16 @@ const VoiceAssistantButton: React.FC<Props> = ({ position = 'right', label = 'As
     e.stopPropagation();
   };
 
-  return (
+  const content = (
     <div
       className={[
-        'fixed z-[100]',
-        // On mobile, prefer bottom-left to avoid Book button on right
-        // On md+ fallback to the provided position (default right)
-        'left-4 right-auto md:left-auto',
+        // Render above all UI and overlays
+        'fixed z-[9999]',
+        // Mobile: pin near top-right but leave space for burger menu
+        'top-4 right-16',
+        // Desktop/tablet: revert to bottom placement with configurable side
+        'md:top-auto md:bottom-8 md:right-auto md:left-auto',
         position === 'right' ? 'md:right-8' : 'md:left-8',
-        'bottom-6 md:bottom-8',
-        'pb-[env(safe-area-inset-bottom)]',
       ].join(' ')}
       onDragOver={preventDnD}
       onDrop={preventDnD}
@@ -84,6 +85,12 @@ const VoiceAssistantButton: React.FC<Props> = ({ position = 'right', label = 'As
       </div>
     </div>
   );
+
+  // Use a portal so transforms/overflow from ancestors never hide the button on mobile
+  if (typeof document !== 'undefined') {
+    return createPortal(content, document.body);
+  }
+  return content;
 };
 
 const MicIcon: React.FC<{ active: boolean; busy: boolean }> = ({ active, busy }) => (
