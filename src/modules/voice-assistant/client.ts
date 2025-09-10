@@ -20,6 +20,9 @@ export class VoiceAssistantClient {
   private agent?: RealtimeAgent;
   private session?: RealtimeSession;
   private sessionId: string = '';
+  private connectStartMs: number | null = null;
+  private firstResponseSent = false;
+  private readonly assistantVersion = (import.meta.env.VITE_VOICE_ASSISTANT_VERSION as string) || 'v1';
 
   constructor(opts: VoiceAssistantOptions = {}) {
     this.opts = {
@@ -89,7 +92,16 @@ export class VoiceAssistantClient {
       if (!ephemeral) throw new Error('No ephemeral key returned');
       this.sessionId = this.makeSessionId();
       const log = (action: string, extra: Record<string, any> = {}) => this.logAction(action, extra);
-      try { await log('session_start'); } catch {}
+      try {
+        const { path, utm } = this.getPageContext();
+        await log('session_start', {
+          assistant_version: this.assistantVersion,
+          page_path: path,
+          utm_source: utm.source,
+          utm_medium: utm.medium,
+          utm_campaign: utm.campaign,
+        });
+      } catch {}
       // Build instructions with a page snapshot for grounded answers
       const pageText = this.safeClip(document.body?.innerText || '', 6000);
       // Build a compact product catalogue to ground shopping queries
@@ -133,27 +145,38 @@ export class VoiceAssistantClient {
           specialRequests: z.string().optional().nullable(),
         }),
         async execute(input) {
-          const res = await fetch('/api/booking', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              date: input.date,
-              time: input.time,
-              partySize: input.partySize,
-              name: input.name,
-              email: input.contact?.email,
-              phone: input.contact?.phone,
-              specialRequests: input.specialRequests,
-            }),
-          });
-          if (!res.ok) {
-            let text = '';
-            try { text = await res.text(); } catch {}
-            throw new Error(`Booking failed: ${res.status}${text ? ` - ${text}` : ''}`);
+          const t0 = Date.now();
+          try {
+            const res = await fetch('/api/booking', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                date: input.date,
+                time: input.time,
+                partySize: input.partySize,
+                name: input.name,
+                email: input.contact?.email,
+                phone: input.contact?.phone,
+                specialRequests: input.specialRequests,
+              }),
+            });
+            if (!res.ok) {
+              let text = '';
+              try { text = await res.text(); } catch {}
+              await log('tool_result', { name: 'book_table', success: false, latency_ms: Date.now() - t0 });
+              throw new Error(`Booking failed: ${res.status}${text ? ` - ${text}` : ''}`);
+            }
+            const out = await res.json();
+            try {
+              await log('tool_result', { name: 'book_table', success: true, latency_ms: Date.now() - t0, delta: 1 });
+              await log('turn');
+              await this.markFirstResponse();
+            } catch {}
+            return out;
+          } catch (err) {
+            // already logged above in failure case
+            throw err;
           }
-          const out = await res.json();
-          try { await log('booking_created'); } catch {}
-          return out;
         },
       });
 
@@ -179,6 +202,7 @@ export class VoiceAssistantClient {
         async execute({ items }) {
           const added: any[] = [];
           const notFound: any[] = [];
+          const t0 = Date.now();
           for (const it of items) {
             const product = findProduct(it.product);
             if (!product) {
@@ -192,7 +216,11 @@ export class VoiceAssistantClient {
             added.push({ id: product.id, name: product.name, quantity: it.quantity || 1, price: product.priceFrom });
           }
           const addedCount = (items || []).reduce((acc, it) => acc + Math.max(1, Number(it.quantity || 1)), 0);
-          try { await log('add_to_basket', { delta: Math.max(1, addedCount || 1) }); } catch {}
+          try {
+            await log('tool_result', { name: 'add_to_basket', success: true, latency_ms: Date.now() - t0, delta: Math.max(1, items?.length || 1), item_qty_delta: Math.max(1, addedCount || 1) });
+            await log('turn');
+            await this.markFirstResponse();
+          } catch {}
           return {
             added,
             notFound,
@@ -226,27 +254,36 @@ export class VoiceAssistantClient {
       this.opts.onStatus('connecting');
       // Add a connection timeout so the UI doesn't hang forever
       const timeoutMs = 15000;
+      this.connectStartMs = Date.now();
       await Promise.race([
         this.session.connect({ apiKey: ephemeral }),
         new Promise((_resolve, reject) => setTimeout(() => reject(new Error('connect-timeout')), timeoutMs)),
       ]);
       this.opts.onStatus('ready');
+      try {
+        const ms = this.connectStartMs ? Date.now() - this.connectStartMs : undefined;
+        if (typeof ms === 'number') await log('status', { state: 'ready', connection_ms: ms });
+      } catch {}
     } catch (e) {
       this.opts.onError(e);
       const msg = (e as any)?.message || String(e);
       // Surface a more helpful state for mobile issues
+      let endReason: 'timeout' | 'error' | undefined;
       if (/secure context/i.test(msg)) this.opts.onStatus('insecure-context');
       else if (/Microphone access not supported/i.test(msg)) this.opts.onStatus('no-mic');
       else if (/permission denied|allow mic/i.test(msg)) this.opts.onStatus('mic-denied');
       else if (/no microphone detected/i.test(msg)) this.opts.onStatus('no-mic');
-      else if (/connect-timeout/i.test(msg)) this.opts.onStatus('timeout');
-      else this.opts.onStatus('error');
+      else if (/connect-timeout/i.test(msg)) { this.opts.onStatus('timeout'); endReason = 'timeout'; }
+      else { this.opts.onStatus('error'); endReason = 'error'; }
       this.started = false;
-      await this.stop();
+      try {
+        if (endReason) await this.logAction('status', { state: endReason });
+        await this.stop(endReason || undefined);
+      } catch {}
     }
   }
 
-  async stop() {
+  async stop(reason?: 'user_stop' | 'timeout' | 'error') {
     try {
       const anySession: any = this.session as any;
       if (anySession?.disconnect) await anySession.disconnect();
@@ -256,7 +293,7 @@ export class VoiceAssistantClient {
     this.session = undefined;
     this.agent = undefined;
     this.started = false;
-    try { if (this.sessionId) await this.logAction('session_end'); } catch {}
+    try { if (this.sessionId) await this.logAction('session_end', { end_reason: reason || 'user_stop' }); } catch {}
     this.opts.onStatus('stopped');
   }
 
@@ -288,5 +325,28 @@ export class VoiceAssistantClient {
     } catch (e) {
       // Swallow network errors silently to avoid interrupting the session
     }
+  }
+
+  private getPageContext() {
+    try {
+      const url = new URL(location.href);
+      return {
+        path: url.pathname,
+        utm: {
+          source: url.searchParams.get('utm_source') || '',
+          medium: url.searchParams.get('utm_medium') || '',
+          campaign: url.searchParams.get('utm_campaign') || '',
+        },
+      };
+    } catch {
+      return { path: '/', utm: { source: '', medium: '', campaign: '' } };
+    }
+  }
+
+  private async markFirstResponse() {
+    if (this.firstResponseSent) return;
+    this.firstResponseSent = true;
+    const ms = this.connectStartMs ? Date.now() - this.connectStartMs : undefined;
+    if (typeof ms === 'number') await this.logAction('first_response', { first_response_ms: ms });
   }
 }

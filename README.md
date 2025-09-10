@@ -100,9 +100,30 @@ CREATE TABLE IF NOT EXISTS voice_sessions (
   user_agent         text,
   started_at         timestamptz DEFAULT now(),
   ended_at           timestamptz,
+  -- Engagement & timing
+  turn_count         integer NOT NULL DEFAULT 0,
+  connection_ms      integer,
+  first_response_ms  integer,
+  total_duration_s   integer,
+  -- Tool reliability
+  tool_success_count integer NOT NULL DEFAULT 0,
+  tool_error_count   integer NOT NULL DEFAULT 0,
+  last_tool_latency_ms integer,
+  -- Outcomes
+  completed          boolean NOT NULL DEFAULT false,
+  end_reason         text, -- user_stop | timeout | error | rating_done
   basket_add_count   integer NOT NULL DEFAULT 0,
+  basket_item_qty    integer NOT NULL DEFAULT 0,
   booking_count      integer NOT NULL DEFAULT 0,
   rating             smallint CHECK (rating BETWEEN 1 AND 5)
+  ,assistant_version text
+  ,page_path         text
+  ,utm_source        text
+  ,utm_medium        text
+  ,utm_campaign      text
+  ,device_type       text
+  ,browser           text
+  ,os                text
 );
 
 -- Recommended for data hygiene (code no longer depends on this)
@@ -115,8 +136,9 @@ ALTER TABLE voice_sessions ENABLE ROW LEVEL SECURITY;
 
 Integration:
 - Client generates a `sessionId` when the voice session starts, then posts events to `/api/voice/actions`.
-- Events are upserted into `voice_sessions` and counters are incremented server-side.
+- Events are recorded into `voice_sessions` and counters are incremented server-side.
 - The agent asks for a rating (1–5) at the end and posts it via the `record_rating` tool.
+- Metrics captured: turns, timing (connection/first response/total), tool success/error counts, basket item qty, outcome flags, version, page path, UTM, and coarse device/browser/OS from UA.
 
 Verify:
 - Start a voice session, add basket items, make a booking, end the conversation with a rating.
@@ -125,9 +147,27 @@ Verify:
 Troubleshooting
 - If you see 400 from `/api/voice/actions` in dev, your table may be missing or columns differ. Run:
   - `ALTER TABLE voice_sessions ADD COLUMN IF NOT EXISTS basket_add_count integer NOT NULL DEFAULT 0;`
+  - `ALTER TABLE voice_sessions ADD COLUMN IF NOT EXISTS basket_item_qty integer NOT NULL DEFAULT 0;`
   - `ALTER TABLE voice_sessions ADD COLUMN IF NOT EXISTS booking_count integer NOT NULL DEFAULT 0;`
   - `ALTER TABLE voice_sessions ADD COLUMN IF NOT EXISTS rating smallint;`
   - `ALTER TABLE voice_sessions ADD COLUMN IF NOT EXISTS user_agent text;`
   - `ALTER TABLE voice_sessions ADD COLUMN IF NOT EXISTS started_at timestamptz;`
   - `ALTER TABLE voice_sessions ADD COLUMN IF NOT EXISTS ended_at timestamptz;`
+  - `ALTER TABLE voice_sessions ADD COLUMN IF NOT EXISTS turn_count integer NOT NULL DEFAULT 0;`
+  - `ALTER TABLE voice_sessions ADD COLUMN IF NOT EXISTS connection_ms integer;`
+  - `ALTER TABLE voice_sessions ADD COLUMN IF NOT EXISTS first_response_ms integer;`
+  - `ALTER TABLE voice_sessions ADD COLUMN IF NOT EXISTS total_duration_s integer;`
+  - `ALTER TABLE voice_sessions ADD COLUMN IF NOT EXISTS tool_success_count integer NOT NULL DEFAULT 0;`
+  - `ALTER TABLE voice_sessions ADD COLUMN IF NOT EXISTS tool_error_count integer NOT NULL DEFAULT 0;`
+  - `ALTER TABLE voice_sessions ADD COLUMN IF NOT EXISTS last_tool_latency_ms integer;`
+  - `ALTER TABLE voice_sessions ADD COLUMN IF NOT EXISTS completed boolean NOT NULL DEFAULT false;`
+  - `ALTER TABLE voice_sessions ADD COLUMN IF NOT EXISTS end_reason text;`
+  - `ALTER TABLE voice_sessions ADD COLUMN IF NOT EXISTS assistant_version text;`
+  - `ALTER TABLE voice_sessions ADD COLUMN IF NOT EXISTS page_path text;`
+  - `ALTER TABLE voice_sessions ADD COLUMN IF NOT EXISTS utm_source text;`
+  - `ALTER TABLE voice_sessions ADD COLUMN IF NOT EXISTS utm_medium text;`
+  - `ALTER TABLE voice_sessions ADD COLUMN IF NOT EXISTS utm_campaign text;`
+  - `ALTER TABLE voice_sessions ADD COLUMN IF NOT EXISTS device_type text;`
+  - `ALTER TABLE voice_sessions ADD COLUMN IF NOT EXISTS browser text;`
+  - `ALTER TABLE voice_sessions ADD COLUMN IF NOT EXISTS os text;`
 - Ensure local `.env` includes `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` and restart `npm run voice:server`.
