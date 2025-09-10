@@ -118,6 +118,14 @@ const Layout = ({ children, transparentHeader = false }: LayoutProps) => {
             >
               Admin Bookings
             </Link>
+            <Link
+              to="/admin/voice"
+              className="block mx-6 mb-2 border border-[#514640]/60 text-[#514640] px-8 py-3.5 text-center rounded-full hover:bg-[#514640] hover:text-white transition-all duration-300 font-semibold text-lg touch-manipulation"
+              onClick={closeMobileMenu}
+              aria-label="Open Voice Analytics dashboard"
+            >
+              Voice Analytics
+            </Link>
           </div>
         </div>
       </header>
@@ -183,8 +191,16 @@ const Layout = ({ children, transparentHeader = false }: LayoutProps) => {
             </div>
           </div>
           
-          <div className="mt-12 text-center text-sm text-white/70">
+          <div className="mt-12 flex flex-col md:flex-row items-center gap-2 md:gap-0 justify-center md:justify-between text-sm text-white/70">
             <p>© {new Date().getFullYear()} The Rug Café. All rights reserved.</p>
+            <Link
+              to="/admin/voice"
+              className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1.5 text-[12px] text-white/80 hover:text-white hover:bg-white/15 hover:border-white/30 transition-colors"
+              aria-label="Open Voice Analytics dashboard"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-3.5 h-3.5 opacity-80"><path d="M3 3.75A.75.75 0 0 1 3.75 3h16.5a.75.75 0 0 1 .75.75v16.5a.75.75 0 0 1-.75.75H3.75A.75.75 0 0 1 3 20.25zm4.5 11.5a.75.75 0 0 0-.75.75v2a.75.75 0 0 0 1.5 0v-2a.75.75 0 0 0-.75-.75Zm4-4a.75.75 0 0 0-.75.75v6a.75.75 0 1 0 1.5 0v-6a.75.75 0 0 0-.75-.75Zm4-3a.75.75 0 0 0-.75.75v9a.75.75 0 1 0 1.5 0v-9a.75.75 0 0 0-.75-.75Z"/></svg>
+              <span className="tracking-wide">Voice Analytics</span>
+            </Link>
           </div>
         </div>
       </footer>

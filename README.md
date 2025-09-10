@@ -37,6 +37,7 @@ Open the printed localhost URL, click the “Ask The Rug” mic button, allow mi
 ## Voice Assistant Docs
 - Overview & detailed guide: docs/VOICE_ASSISTANT.md
 - Requirements & setup checklist: docs/REQUIREMENTS.md
+ - Admin analytics: open `/admin/voice` locally or after deploy
 
 ## How It Works (Current)
 - The browser asks our tiny Node server (`server/index.js`) for an ephemeral token (never exposes the standard key to the client).
@@ -83,6 +84,7 @@ CREATE INDEX IF NOT EXISTS idx_bookings_date_time ON bookings (date, time);
 Notes
 - The serverless functions use the service role key and parameterized REST calls. RLS can be enabled; the service role bypasses RLS.
 - The Admin Bookings dashboard reads from `/api/bookings` and expects camelCase fields; the API maps DB fields accordingly.
+ - Voice analytics dashboard (`/admin/voice`) reads from `/api/voice/metrics` (server-side aggregation over `voice_sessions`).
 
 ### Voice Analytics (User Actions + Ratings)
 

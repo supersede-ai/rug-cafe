@@ -93,6 +93,14 @@ const server = http.createServer(async (req, res) => {
       await handleToken(req, res);
       return;
     }
+    if (req.method === 'GET' && url.pathname === '/api/voice/metrics') {
+      await handleVoiceMetrics(req, res);
+      return;
+    }
+    if (req.method === 'GET' && url.pathname === '/api/voice/sessions') {
+      await handleVoiceSessions(req, res);
+      return;
+    }
     if (req.method === 'POST' && url.pathname === '/api/voice/actions') {
       await handleVoiceActions(req, res);
       return;
@@ -130,46 +138,87 @@ const server = http.createServer(async (req, res) => {
           if (!name) errors.push('name');
           if (!email && !phone) errors.push('email_or_phone');
           if (errors.length) {
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'missing_fields', fields: errors }));
-            return;
+            return sendJson(res, 400, { error: 'missing_fields', fields: errors });
           }
 
           // Business hours 08:00–18:00
           const [hhStr] = String(time).split(':');
           const hh = Number(hhStr);
           if (Number.isFinite(hh) && (hh < 8 || hh >= 18)) {
-            res.writeHead(409, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'outside_business_hours' }));
-            return;
+            return sendJson(res, 409, { error: 'outside_business_hours' });
           }
 
-          // Persist booking
+          // Normalize
           const id = `rug_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
-          const record = {
-            id,
-            status: 'confirmed',
-            source: 'voice',
-            createdAt: new Date().toISOString(),
-            venue: 'The Rug Café',
-            date,
-            time,
-            partySize,
-            name,
-            email: email || null,
-            phone: phone || null,
-            specialRequests: specialRequests || null,
-          };
+          const timeDb = String(time).match(/^(\d{2}:\d{2})(?::\d{2})?$/)
+            ? (String(time).length === 5 ? `${time}:00` : String(time))
+            : `${String(time).slice(0,5)}:00`;
 
-          const items = await loadBookings();
-          items.push(record);
-          await saveBookings(items);
+          // If Supabase env exists, persist to bookings table; otherwise fallback to file
+          let persisted = null;
+          try {
+            const supabase = getServiceClient();
+            const insertRow = {
+              id,
+              status: 'confirmed',
+              source: 'voice',
+              venue: 'The Rug Café',
+              date: String(date),
+              time: timeDb,
+              party_size: Number(partySize),
+              name: String(name),
+              email: email || null,
+              phone: phone || null,
+              special_requests: specialRequests || null,
+            };
+            const { data: row, error, status } = await supabase
+              .from('bookings')
+              .insert(insertRow)
+              .select('*')
+              .limit(1)
+              .single();
+            if (error) throw Object.assign(new Error(error.message), { status });
+            persisted = {
+              id: row.id,
+              status: row.status || 'confirmed',
+              source: row.source || 'voice',
+              createdAt: row.created_at || new Date().toISOString(),
+              venue: row.venue || 'The Rug Café',
+              date: String(row.date),
+              time: String(row.time).slice(0,5),
+              partySize: Number(row.party_size),
+              name: String(row.name),
+              email: row.email ?? null,
+              phone: row.phone ?? null,
+              specialRequests: row.special_requests ?? null,
+            };
+          } catch (dbErr) {
+            // Fallback to local file storage when Supabase not configured
+            const record = {
+              id,
+              status: 'confirmed',
+              source: 'voice',
+              createdAt: new Date().toISOString(),
+              venue: 'The Rug Café',
+              date: String(date),
+              time: String(timeDb).slice(0,5),
+              partySize: Number(partySize),
+              name: String(name),
+              email: email || null,
+              phone: phone || null,
+              specialRequests: specialRequests || null,
+            };
+            try {
+              const items = await loadBookings();
+              items.push(record);
+              await saveBookings(items);
+            } catch {}
+            persisted = record;
+          }
 
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify(record));
+          return sendJson(res, 200, persisted);
         } catch (err) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'invalid_json', details: String(err) }));
+          return sendJson(res, 400, { error: 'invalid_json', details: String(err) });
         }
       });
       return;
@@ -473,4 +522,132 @@ function calcDurationSeconds(startIso, endIso) {
   const t1 = Date.parse(endIso);
   if (!isFinite(t0) || !isFinite(t1)) return null;
   return Math.max(0, Math.round((t1 - t0) / 1000));
+}
+
+function csvEscape(v) {
+  if (v === null || v === undefined) return '';
+  const s = String(v);
+  if (/[",\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+  return s;
+}
+
+// ---- Voice metrics (local dev) ----
+async function handleVoiceMetrics(req, res) {
+  try {
+    const url = new URL(req.url || '', `http://${req.headers.host}`);
+    const daysParam = url.searchParams.get('days') || url.searchParams.get('d');
+    const days = Math.max(1, Math.min(90, Number(daysParam || 14)));
+    const to = new Date();
+    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    const supabase = getServiceClient();
+    const { data, error, status } = await supabase
+      .from('voice_sessions')
+      .select('created_at,basket_add_count,basket_item_qty,booking_count,rating,connection_ms,first_response_ms,total_duration_s,tool_success_count,tool_error_count,last_tool_latency_ms,device_type,browser,os,page_path,assistant_version,end_reason')
+      .gte('created_at', from.toISOString())
+      .lte('created_at', to.toISOString())
+      .order('created_at', { ascending: true });
+    if (error) return sendJson(res, status || 500, { error: 'db_list_failed', details: error.message });
+    const rows = data || [];
+    const sessions = rows.length;
+    const sum = (arr, k) => arr.reduce((a, r) => a + (Number(r?.[k]) || 0), 0);
+    const collect = (k) => rows.map((r) => Number(r?.[k])).filter((v) => Number.isFinite(v) && v > 0);
+    const median = (vals) => {
+      if (!vals.length) return 0;
+      const v = vals.slice().sort((a, b) => a - b);
+      const mid = Math.floor(v.length / 2);
+      return v.length % 2 ? v[mid] : Math.round((v[mid - 1] + v[mid]) / 2);
+    };
+    const basketSessions = rows.filter((r) => (Number(r?.basket_add_count) || 0) > 0).length;
+    const bookingSessions = rows.filter((r) => (Number(r?.booking_count) || 0) > 0).length;
+    const basketAdds = sum(rows, 'basket_add_count');
+    const basketItems = sum(rows, 'basket_item_qty');
+    const bookings = sum(rows, 'booking_count');
+    const ratings = collect('rating');
+    const avgRating = ratings.length ? Number((ratings.reduce((a, b) => a + b, 0) / ratings.length).toFixed(2)) : null;
+    const medConn = median(collect('connection_ms')) || 0;
+    const medFirst = median(collect('first_response_ms')) || 0;
+    const medTotal = median(collect('total_duration_s')) || 0;
+    const toolSucc = sum(rows, 'tool_success_count');
+    const toolErr = sum(rows, 'tool_error_count');
+    const errorRate = toolSucc + toolErr > 0 ? Number((toolErr / (toolSucc + toolErr)).toFixed(3)) : 0;
+    const keyOf = (d) => d.toISOString().slice(0, 10);
+    const dailyMap = new Map();
+    for (const r of rows) {
+      const k = keyOf(new Date(r.created_at));
+      const entry = dailyMap.get(k) || { day: k, sessions: 0, basket_sessions: 0, booking_sessions: 0, basket_adds: 0, basket_items: 0, bookings: 0, ratings: [] };
+      entry.sessions += 1;
+      entry.basket_sessions += (Number(r.basket_add_count) || 0) > 0 ? 1 : 0;
+      entry.booking_sessions += (Number(r.booking_count) || 0) > 0 ? 1 : 0;
+      entry.basket_adds += Number(r.basket_add_count) || 0;
+      entry.basket_items += Number(r.basket_item_qty) || 0;
+      entry.bookings += Number(r.booking_count) || 0;
+      const rate = Number(r.rating) || 0; if (rate > 0) entry.ratings.push(rate);
+      dailyMap.set(k, entry);
+    }
+    const daily = Array.from(dailyMap.values()).sort((a, b) => a.day.localeCompare(b.day)).map((e) => ({ ...e, avg_rating: e.ratings.length ? Number((e.ratings.reduce((a, b) => a + b, 0) / e.ratings.length).toFixed(2)) : null }));
+    const groupCount = (k) => {
+      const map = new Map();
+      for (const r of rows) {
+        const v = String(r?.[k] || 'unknown');
+        map.set(v, (map.get(v) || 0) + 1);
+      }
+      return Array.from(map.entries()).map(([name, count]) => ({ [k]: name, sessions: count }));
+    };
+    return sendJson(res, 200, {
+      range: { from: from.toISOString(), to: to.toISOString(), days },
+      totals: {
+        sessions,
+        sessions_with_basket: basketSessions,
+        sessions_with_booking: bookingSessions,
+        basket_adds: basketAdds,
+        basket_items: basketItems,
+        bookings,
+        avg_rating: avgRating,
+        median_connection_ms: medConn,
+        median_first_response_ms: medFirst,
+        median_total_duration_s: medTotal,
+        error_rate: errorRate,
+      },
+      daily,
+      by_device: groupCount('device_type'),
+      by_browser: groupCount('browser'),
+    });
+  } catch (e) {
+    return sendJson(res, 500, { error: 'metrics_error', details: String(e) });
+  }
+}
+
+async function handleVoiceSessions(req, res) {
+  try {
+    const url = new URL(req.url || '', `http://${req.headers.host}`);
+    const daysParam = url.searchParams.get('days') || url.searchParams.get('d');
+    const format = (url.searchParams.get('format') || 'json').toLowerCase();
+    const days = Math.max(1, Math.min(365, Number(daysParam || 30)));
+    const to = new Date();
+    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    const supabase = getServiceClient();
+    const columns = 'created_at,session_id,assistant_version,page_path,device_type,browser,os,turn_count,connection_ms,first_response_ms,total_duration_s,tool_success_count,tool_error_count,last_tool_latency_ms,basket_add_count,basket_item_qty,booking_count,rating,completed,end_reason';
+    const { data, error, status } = await supabase
+      .from('voice_sessions')
+      .select(columns)
+      .gte('created_at', from.toISOString())
+      .lte('created_at', to.toISOString())
+      .order('created_at', { ascending: true });
+    if (error) return sendJson(res, status || 500, { error: 'db_list_failed', details: error.message });
+    const rows = data || [];
+    if (format === 'csv') {
+      const header = ['created_at','session_id','assistant_version','page_path','device_type','browser','os','turn_count','connection_ms','first_response_ms','total_duration_s','tool_success_count','tool_error_count','last_tool_latency_ms','basket_add_count','basket_item_qty','booking_count','rating','completed','end_reason'];
+      const csv = [header.join(',')]
+        .concat(rows.map((r) => header.map((k) => csvEscape(r?.[k])).join(',')))
+        .join('\n');
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="voice_sessions_${from.toISOString().slice(0,10)}_${days}d.csv"`);
+      res.writeHead(200);
+      res.end(csv);
+      return;
+    }
+    return sendJson(res, 200, { from: from.toISOString(), to: to.toISOString(), count: rows.length, items: rows });
+  } catch (e) {
+    return sendJson(res, 500, { error: 'sessions_error', details: String(e) });
+  }
 }
