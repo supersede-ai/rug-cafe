@@ -62,7 +62,8 @@ Environment variables (see `.env.example`)
 - `VITE_VOICE_TOKEN_URL` (default: `/api/voice/token`): Frontend path to your token endpoint.
 - `VITE_VOICE_TRANSCRIBE_ENABLED` (default: `true`): Enable input audio transcription for text-based features.
 - `VITE_VOICE_TRANSCRIBE_MODEL` (default: `gpt-4o-mini-transcribe`): Transcription model name.
-- `VITE_VOICE_GOODBYE_DELAY_MS` (default: `1200`): Delay before disconnect when the agent says a goodbye and calls the tool, to avoid cutting off audio.
+- `VITE_VOICE_GOODBYE_DELAY_MS` (default: `4000`): Delay before disconnect when the agent says a goodbye and calls the tool, to avoid cutting off audio.
+- `VITE_VOICE_LOCAL_END_DETECT_ENABLED` (default: `false`): Toggle client-side end-of-session heuristics. Off by default; we rely on the agent to infer the end and call the `end_session` tool.
 - `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` (server only): Enable serverless analytics endpoints to persist session metrics and ratings.
 
 Branding & Prompt
@@ -87,7 +88,7 @@ Ports
 
 - The floating mic button reflects session lifecycle: “Connecting…”, “Listening…”, “Ending…”, then returns to the idle label.
 - On end, the button auto-toggles off after teardown to avoid stale active state.
- - After conversation wrap-up, the assistant asks the guest for a 1–5 rating and records it (optional; can be disabled by removing the `record_rating` tool).
+- Rating prompt: The assistant asks for a 1–5 rating only if a reservation was successfully created during the session and the conversation is ending. Otherwise, it does not ask for a rating.
 
 ## Adding Rich Context Later (Optional)
 
@@ -110,31 +111,31 @@ We briefly implemented this and then reverted for now so you can commit a stable
 - Token errors: make sure `npm run voice:server` is running and `OPENAI_API_KEY` is set.
 - Port conflicts: Vite auto-increments; check terminal output for the final URL.
 
-## Ending Sessions (Goodbye Detection)
+## Ending Sessions (Goodbye)
 
-The assistant can now end sessions automatically when the user clearly signals they’re done, e.g., “bye”, “goodbye”, “that’s all”, “we’re done”, “stop”.
+Default behavior (agent-driven)
+- The agent infers when the conversation has ended from user intent. When appropriate, it says a brief, natural goodbye in the user’s language and then calls the `end_session` tool to close the connection.
+- We increased the goodbye delay (`VITE_VOICE_GOODBYE_DELAY_MS`) so the spoken goodbye is not cut off before disconnect.
+- The client does not use local keyword detection by default.
 
-How it works
-- Model path: The agent says a brief, natural goodbye (in the user’s language), then calls the `end_session` tool when confident.
-- Detector path: As a fallback, the client detects end intent. On strong signals, it asks the model to speak a brief multilingual goodbye, then disconnects after a short delay.
-- Borderline/risky: The assistant asks once (in the user’s language) to confirm if they intended to end; it ends only on an explicit yes, then speaks a short goodbye before disconnecting.
-- Teardown: The tool performs a clean disconnect and waits a short, configurable delay so the goodbye finishes; the tool itself does not add more speech (to avoid double-goodbyes).
+Optional local detection (off by default)
+- You can experiment with client-side end-intent detection by setting `VITE_VOICE_LOCAL_END_DETECT_ENABLED=true`.
+- We deliberately ship with no local keyword list configured. If you enable this flag without adding phrases, local detection will remain effectively inactive.
+- To customize, edit `src/modules/voice-assistant/end-intent.ts` to add phrases and heuristics. Be cautious: overly broad keywords (e.g., “stop”) can cause mid-task session endings.
 
-Notes
-- Audio-only inputs require transcription if you want client-side text checks; when disabled, the agent can still end via the `end_session` tool, but local keyword detection won’t run.
-- You can still stop the assistant manually by clicking the mic button again.
+UX guardrails
+- The agent is instructed not to end the session while it is collecting details or before executing a requested action (e.g., during reservation flow).
+- If you do enable local detection, the client will require explicit confirmation in risky contexts (e.g., immediately after the assistant asked a question), preventing premature disconnects.
 
-Cost considerations
-- Transcription uses the configured transcription model and is billed separately from the realtime model’s generation. Keep it lightweight (mini/nano tier if available) and rely on turn detection to reduce silence.
-- You can disable transcription via `VITE_VOICE_TRANSCRIBE_ENABLED=false` if you prefer purely model-driven endings via the `end_session` tool.
+You can still stop the assistant manually at any time by clicking the mic button again.
 
 ## Ratings & Analytics
 
-The assistant now records basic session analytics and an optional end-of-session rating.
+The assistant records session analytics; rating collection is gated to successful bookings.
 
 - Session lifecycle: the client generates a `sessionId` at start and posts events to `/api/voice/actions`.
 - Captured metrics: connection and first-response timing, turn counts, tool success/error counts, basket adds and item quantity, booking count, end reason, completion, version, page path, UTM, and coarse device/browser/OS.
-- Rating: after the conversation, the model asks the guest for a 1–5 rating and calls the `record_rating` tool. This writes `rating` and finalizes the row.
-- Admin: open `/admin/voice` to see aggregates. Serverless routes power this: `/api/voice/actions`, `/api/voice/metrics`, `/api/voice/sessions`.
+- Rating: the assistant may ask for a 1–5 rating only if a reservation was successfully created in the current session and the conversation is ending. The `record_rating` tool will no-op if no booking occurred (logged as `rating_skipped_no_booking`).
+- Admin: open `/admin/voice` to see aggregates. Serverless routes: `/api/voice/actions`, `/api/voice/metrics`, `/api/voice/sessions`.
 
-Disable ratings: remove the `record_rating` tool from `client.ts` and the guidance line in the instructions.
+Disable ratings: remove the `record_rating` tool and the related prompt line from the instructions in `client.ts`.
