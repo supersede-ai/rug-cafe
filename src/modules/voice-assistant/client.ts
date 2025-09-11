@@ -29,6 +29,7 @@ export class VoiceAssistantClient {
   private hasEnded = false;
   private lastDetection?: { confidence: number; strategy?: string };
   private endingByTool = false;
+  private bookingMade = false;
 
   // Analytics + session tracking (from dashboard-integration)
   private sessionId: string = '';
@@ -133,8 +134,8 @@ export class VoiceAssistantClient {
         '- Keep answers concise and friendly.',
         '- When a guest wants a reservation, gather date, time, party size, name, and at least one contact (email or phone). Confirm details aloud, then call the book_table tool.',
         '- When a guest asks to buy/add coffee, resolve which product from the catalogue they want and call add_to_basket. If you are uncertain which item, clarify before adding.',
-        '- Only end the session after requested tasks are finished or the user explicitly asks you to end it (clear farewells like "goodbye"/"bye", or explicit "end the session"). Do not end while you are collecting details or before executing an action. Phrases like "that\'s it" or "that\'s all" usually mean the guest has finished providing details — proceed with the task rather than ending.',
-        '- When the conversation wraps up, ask the guest to rate the assistant from 1 to 5, then call record_rating with that number.',
+        '- Infer when the conversation has ended based on the user\'s intent. When the user clearly indicates they are done, say a brief goodbye in the user\'s language and then call the end_session tool with a short reason. Do not end while collecting details or before executing a requested action.',
+        '- Only ask for a rating if a reservation was successfully created in this session and you are ending the conversation. Otherwise, do not ask for a rating or feedback.',
       ].join('\n');
 
       // Initialize SDK agent + session
@@ -184,6 +185,7 @@ export class VoiceAssistantClient {
               await log('tool_result', { name: 'book_table', success: true, latency_ms: Date.now() - t0, delta: 1 });
               await log('turn');
               await this.markFirstResponse();
+              this.bookingMade = true;
             } catch {}
             return out;
           } catch (err) {
@@ -265,15 +267,20 @@ export class VoiceAssistantClient {
         },
       });
 
-      // Rating tool for dashboard analytics
+      // Rating tool for dashboard analytics (gated to successful bookings)
       const recordRatingTool = tool({
         name: 'record_rating',
-        description: 'Record a user rating (1-5) for the voice assistant at the end of the conversation. Ask the guest first, then call this.',
+        description: 'Record a user rating (1-5) only if a reservation was created successfully in this session and the conversation is ending.',
         strict: true,
         parameters: z.object({
           rating: z.number().int().min(1).max(5).describe('User rating from 1 to 5'),
         }),
         async execute({ rating }) {
+          // Only allow rating if a booking was successfully created in this session
+          if (!this.bookingMade) {
+            try { await log('status', { state: 'rating_skipped_no_booking' }); } catch {}
+            return { ok: false, skip: true, reason: 'no_booking' } as any;
+          }
           await log('rating', { rating });
           return { ok: true } as any;
         },
@@ -318,6 +325,10 @@ export class VoiceAssistantClient {
 
           const lastUser = findLastText(history, 'user');
           if (!lastUser?.text) return;
+
+          // Local end-intent detection is disabled by default. Enable with VITE_VOICE_LOCAL_END_DETECT_ENABLED=true
+          const localEndDetectEnabled = strToBool((import.meta.env.VITE_VOICE_LOCAL_END_DETECT_ENABLED as string) ?? 'false');
+          if (!localEndDetectEnabled) return;
 
           // If a tool-driven ending is already in progress, ignore local detection
           if (this.endingByTool) return;
