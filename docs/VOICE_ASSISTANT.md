@@ -12,6 +12,7 @@ Prereqs
 Steps
 1) Install deps: `npm install`
 2) Copy env file: `cp .env.example .env` and set `OPENAI_API_KEY=<your_key>`
+   - Optional (for analytics dashboard): set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`
 3) Start token server (terminal 1): `npm run voice:server`
 4) Start Vite dev (terminal 2): `npm run dev`
 5) Open the printed localhost URL (e.g., http://localhost:8080 or http://localhost:8082)
@@ -32,6 +33,7 @@ Components
   - Uses `@openai/agents/realtime` (`RealtimeAgent`, `RealtimeSession`).
   - Builds concise on-brand instructions and includes a clipped snapshot of the current page’s visible text to ground the assistant’s answers.
   - Exposes `start()`/`stop()` and status updates.
+  - Generates a `sessionId` and logs lightweight analytics to `/api/voice/actions` (connection timing, first response, tool results, session end, rating).
 - `src/components/VoiceAssistantButton.tsx` (UI)
   - Floating gradient mic button with status text and pulse animation.
   - Calls the client’s `start()`/`stop()`.
@@ -61,6 +63,7 @@ Environment variables (see `.env.example`)
 - `VITE_VOICE_TRANSCRIBE_ENABLED` (default: `true`): Enable input audio transcription for text-based features.
 - `VITE_VOICE_TRANSCRIBE_MODEL` (default: `gpt-4o-mini-transcribe`): Transcription model name.
 - `VITE_VOICE_GOODBYE_DELAY_MS` (default: `1200`): Delay before disconnect when the agent says a goodbye and calls the tool, to avoid cutting off audio.
+- `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` (server only): Enable serverless analytics endpoints to persist session metrics and ratings.
 
 Branding & Prompt
 - Change voice: set `REALTIME_VOICE` in `.env`.
@@ -84,6 +87,7 @@ Ports
 
 - The floating mic button reflects session lifecycle: “Connecting…”, “Listening…”, “Ending…”, then returns to the idle label.
 - On end, the button auto-toggles off after teardown to avoid stale active state.
+ - After conversation wrap-up, the assistant asks the guest for a 1–5 rating and records it (optional; can be disabled by removing the `record_rating` tool).
 
 ## Adding Rich Context Later (Optional)
 
@@ -123,3 +127,14 @@ Notes
 Cost considerations
 - Transcription uses the configured transcription model and is billed separately from the realtime model’s generation. Keep it lightweight (mini/nano tier if available) and rely on turn detection to reduce silence.
 - You can disable transcription via `VITE_VOICE_TRANSCRIBE_ENABLED=false` if you prefer purely model-driven endings via the `end_session` tool.
+
+## Ratings & Analytics
+
+The assistant now records basic session analytics and an optional end-of-session rating.
+
+- Session lifecycle: the client generates a `sessionId` at start and posts events to `/api/voice/actions`.
+- Captured metrics: connection and first-response timing, turn counts, tool success/error counts, basket adds and item quantity, booking count, end reason, completion, version, page path, UTM, and coarse device/browser/OS.
+- Rating: after the conversation, the model asks the guest for a 1–5 rating and calls the `record_rating` tool. This writes `rating` and finalizes the row.
+- Admin: open `/admin/voice` to see aggregates. Serverless routes power this: `/api/voice/actions`, `/api/voice/metrics`, `/api/voice/sessions`.
+
+Disable ratings: remove the `record_rating` tool from `client.ts` and the guidance line in the instructions.
