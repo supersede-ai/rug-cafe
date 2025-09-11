@@ -26,7 +26,11 @@ const VoiceAssistantButton: React.FC<Props> = ({ position = 'right', label = 'As
         'Avoid over-promising. Confirm spellings for names or numbers.',
       ].join('\n')
     ),
-    onStatus: setStatus,
+    onStatus: (s) => {
+      setStatus(s);
+      // Auto-toggle off when the session stops or hits a terminal state
+      if (s === 'stopped') setActive(false);
+    },
     onError: (e) => console.error('Voice assistant error:', e),
   }), []);
 
@@ -40,7 +44,7 @@ const VoiceAssistantButton: React.FC<Props> = ({ position = 'right', label = 'As
     }
   };
 
-  const isBusy = active && status !== 'ready';
+  const isBusy = active && (status === 'requesting-mic' || status === 'connecting');
 
   const preventDnD = (e: React.DragEvent) => {
     e.preventDefault();
@@ -77,7 +81,13 @@ const VoiceAssistantButton: React.FC<Props> = ({ position = 'right', label = 'As
       >
         <MicIcon active={active} busy={isBusy} />
         <span className="font-bold text-sm sm:text-base md:text-lg">
-          {active ? (isBusy ? 'Connecting…' : 'Listening… tap to stop') : label}
+          {active
+            ? isBusy
+              ? 'Connecting…'
+              : status === 'ending'
+                ? 'Ending…'
+                : 'Listening… tap to stop'
+            : label}
         </span>
       </button>
       <div className="hidden sm:block mt-2 ml-1 text-xs md:text-sm text-[#514640] bg-white/80 backdrop-blur rounded-full px-3 py-1 shadow pointer-events-none" aria-live="polite">

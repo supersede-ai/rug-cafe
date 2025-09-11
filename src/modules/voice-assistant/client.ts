@@ -4,6 +4,9 @@ import { RealtimeAgent, RealtimeSession, tool } from '@openai/agents/realtime';
 import * as z from 'zod';
 import { COFFEE_PRODUCTS, findProduct } from '@/data/products';
 import * as Cart from '@/lib/cart';
+import { detectAffirmation, detectEndIntentFromText, detectNegation, shouldConfirmEnd } from './end-intent';
+import { endSessionGracefully } from './session-teardown';
+import type { EndOptions } from './session-teardown';
 
 export type VoiceAssistantOptions = {
   tokenUrl?: string; // Defaults to '/api/voice/token'
@@ -19,6 +22,12 @@ export class VoiceAssistantClient {
   private opts: Required<VoiceAssistantOptions>;
   private agent?: RealtimeAgent;
   private session?: RealtimeSession;
+  private awaitingEndConfirm = false;
+  private lastAssistantText?: string;
+  private lastAssistantAt?: number;
+  private hasEnded = false;
+  private lastDetection?: { confidence: number; strategy?: string };
+  private endingByTool = false;
 
   constructor(opts: VoiceAssistantOptions = {}) {
     this.opts = {
@@ -105,6 +114,7 @@ export class VoiceAssistantClient {
         '- Keep answers concise and friendly.',
         '- When a guest wants a reservation, gather date, time, party size, name, and at least one contact (email or phone). Confirm details aloud, then call the book_table tool.',
         '- When a guest asks to buy/add coffee, resolve which product from the catalogue they want and call add_to_basket. If you are uncertain which item, clarify before adding.',
+        '- If the user clearly indicates the conversation should end (e.g., "goodbye", "that\'s all", "we\'re done"), say a brief, natural goodbye in the user\'s language and then call the end_session tool with a short reason to end the session.',
       ].join('\n');
 
       // Initialize SDK agent + session
@@ -193,13 +203,45 @@ export class VoiceAssistantClient {
         },
       });
 
+      // End-session tool: lets the agent explicitly end on user request
+      const endSessionTool = tool({
+        name: 'end_session',
+        description: 'End the realtime session immediately and say a short goodbye. Use when the user clearly indicates they are done.',
+        strict: true,
+        parameters: z.object({
+          // Structured outputs require fields to be required or nullable; avoid optional-only
+          reason: z.string().nullable().describe('Reason like "user_goodbye" (nullable)'),
+        }),
+        execute: async ({ reason }) => {
+          const r = reason || 'agent_tool_end';
+          this.logAnalytics({ reason: r, source: 'tool' });
+          const goodbyeDelayMs = clampInt((import.meta.env.VITE_VOICE_GOODBYE_DELAY_MS as any) ?? 1200, 0, 5000);
+          // Mark tool-driven ending to avoid detector races, schedule teardown after tool result posts
+          this.endingByTool = true;
+          setTimeout(() => {
+            this.smartEnd(r, { allowGoodbyeMs: goodbyeDelayMs, doInterrupt: false, speakConfirmation: false });
+          }, 50);
+          return { ended: true } as any;
+        },
+      });
+
       this.agent = new RealtimeAgent({
         name: 'Rug Assistant',
         instructions,
-        tools: [bookTableTool, addToBasketTool],
+        tools: [bookTableTool, addToBasketTool, endSessionTool],
         voice: this.opts.voice,
       });
-      this.session = new RealtimeSession(this.agent);
+      const transcribeEnabled = strToBool((import.meta.env.VITE_VOICE_TRANSCRIBE_ENABLED as string) ?? 'true');
+      const transcribeModel = (import.meta.env.VITE_VOICE_TRANSCRIBE_MODEL as string) || 'gpt-4o-mini-transcribe';
+
+      this.session = new RealtimeSession(this.agent, {
+        model: this.opts.model,
+        config: {
+          ...(transcribeEnabled
+            ? { inputAudioTranscription: { model: transcribeModel } }
+            : {}),
+        },
+      });
 
       this.opts.onStatus('connecting');
       // Add a connection timeout so the UI doesn't hang forever
@@ -209,6 +251,86 @@ export class VoiceAssistantClient {
         new Promise((_resolve, reject) => setTimeout(() => reject(new Error('connect-timeout')), timeoutMs)),
       ]);
       this.opts.onStatus('ready');
+
+      // Wire session events for end-intent detection and state tracking
+      this.session.on('history_updated', (history: any[]) => {
+        try {
+          // Track last assistant text for risk assessment
+          const lastAssistant = findLastText(history, 'assistant');
+          if (lastAssistant) {
+            this.lastAssistantText = lastAssistant.text;
+            this.lastAssistantAt = Date.now();
+          }
+
+          const lastUser = findLastText(history, 'user');
+          if (!lastUser?.text) return;
+
+          // If a tool-driven ending is already in progress, ignore local detection
+          if (this.endingByTool) return;
+
+          // If we're waiting on explicit confirmation, short-circuit
+          if (this.awaitingEndConfirm) {
+            if (detectAffirmation(lastUser.text)) {
+              this.awaitingEndConfirm = false;
+              this.logAnalytics({ reason: 'user_goodbye_confirmed', source: 'detector_confirm', ...this.lastDetection });
+              // Speak a brief, natural goodbye (multilingual) then end
+              const goodbyeDelayMs = clampInt((import.meta.env.VITE_VOICE_GOODBYE_DELAY_MS as any) ?? 1200, 0, 5000);
+              try {
+                (this.session as any).sendMessage?.(
+                  "Please say a brief, natural goodbye in the user's language and no further content."
+                );
+              } catch {}
+              this.smartEnd('user_goodbye_confirmed', {
+                allowGoodbyeMs: goodbyeDelayMs,
+                doInterrupt: false,
+                speakConfirmation: false,
+              });
+              return;
+            }
+            if (detectNegation(lastUser.text)) {
+              this.awaitingEndConfirm = false;
+              // Carry on; no end.
+              return;
+            }
+            // Ambiguous; ignore and continue.
+            return;
+          }
+
+          // Run detector on the latest user utterance
+          const det = detectEndIntentFromText(lastUser.text);
+          if (!det.match) return;
+          this.lastDetection = { confidence: det.confidence, strategy: det.strategy };
+          const STRONG = 0.7;
+          const WEAK = 0.5;
+
+          const risky = shouldConfirmEnd(this.lastAssistantText, this.lastAssistantAt);
+          const needsConfirm = risky || det.confidence < STRONG;
+          if (needsConfirm && det.confidence >= WEAK) {
+            try { (this.session as any).sendMessage?.('Do you want to end here?'); } catch {}
+            this.awaitingEndConfirm = true;
+            return;
+          }
+
+          if (det.confidence >= STRONG) {
+            this.logAnalytics({ reason: 'user_goodbye', source: 'detector', ...this.lastDetection });
+            // Multilingual goodbye via the model, then disconnect without cutting off audio
+            const goodbyeDelayMs = clampInt((import.meta.env.VITE_VOICE_GOODBYE_DELAY_MS as any) ?? 1200, 0, 5000);
+            try {
+              (this.session as any).sendMessage?.(
+                "Please say a brief, natural goodbye in the user's language and no further content."
+              );
+            } catch {}
+            this.smartEnd('user_goodbye', {
+              allowGoodbyeMs: goodbyeDelayMs,
+              doInterrupt: false,
+              speakConfirmation: false,
+            });
+          }
+        } catch (e) {
+          // non-fatal
+          console.warn('history_updated handler error', e);
+        }
+      });
     } catch (e) {
       this.opts.onError(e);
       const msg = (e as any)?.message || String(e);
@@ -227,9 +349,10 @@ export class VoiceAssistantClient {
   async stop() {
     try {
       const anySession: any = this.session as any;
-      if (anySession?.disconnect) await anySession.disconnect();
-      else if (anySession?.close) anySession.close();
-      else if (anySession?.destroy) anySession.destroy();
+      if (anySession) {
+        this.logAnalytics({ reason: 'manual', source: 'user_ui' });
+        await endSessionGracefully(anySession, { reason: 'manual' });
+      }
     } catch {}
     this.session = undefined;
     this.agent = undefined;
@@ -240,4 +363,71 @@ export class VoiceAssistantClient {
   private safeClip(text: string, limit: number) {
     return text.length > limit ? text.slice(0, limit) + '\n…' : text;
   }
+
+  private async smartEnd(reason: string, options?: Partial<EndOptions>) {
+    if (this.hasEnded) return;
+    this.hasEnded = true;
+    try {
+      this.opts.onStatus('ending');
+      await endSessionGracefully(this.session, { reason, ...(options || {}) });
+    } finally {
+      this.session = undefined;
+      this.agent = undefined;
+      this.started = false;
+      this.awaitingEndConfirm = false;
+      this.endingByTool = false;
+      this.opts.onStatus('stopped');
+      this.hasEnded = false;
+    }
+  }
+
+  private async logAnalytics(meta: { reason: string; source: string; confidence?: number; strategy?: string }) {
+    try {
+      const payload = {
+        type: 'session_end',
+        ...meta,
+      };
+      // Best-effort; don't block UX
+      fetch('/api/voice/event', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        keepalive: true as any,
+      }).catch(() => {});
+    } catch {}
+  }
+}
+
+// -------- helpers --------
+function findLastText(history: any[], role: 'user' | 'assistant'): { text: string } | undefined {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const item = history[i];
+    if (!item) continue;
+    if (item.type !== 'message' || item.role !== role) continue;
+    // content can be array of parts with different types
+    const parts: any[] = Array.isArray(item.content) ? item.content : [];
+    // Prefer explicit text fields
+    for (const p of parts) {
+      const text = p?.text || p?.content || p?.transcript || p?.value;
+      if (typeof text === 'string' && text.trim()) {
+        return { text };
+      }
+    }
+    // Sometimes there may be a top-level text
+    if (typeof (item as any).text === 'string') {
+      const t = (item as any).text.trim();
+      if (t) return { text: t };
+    }
+  }
+  return undefined;
+}
+
+function strToBool(v: string): boolean {
+  return /^(1|true|yes|y)$/i.test(String(v || '').trim());
+}
+
+function clampInt(v: any, min: number, max: number): number {
+  const n = Number.parseInt(String(v), 10);
+  if (!Number.isFinite(n)) return min;
+  return Math.max(min, Math.min(max, n));
 }
