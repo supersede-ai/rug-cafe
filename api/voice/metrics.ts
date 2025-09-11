@@ -28,7 +28,26 @@ export default async function handler(req: any, res: any) {
 
     if (error) return res.status(status || 500).json({ error: 'db_list_failed', details: error.message });
 
-    const rows = data || [];
+    type VoiceRow = {
+      created_at: string;
+      basket_add_count?: number;
+      basket_item_qty?: number;
+      booking_count?: number;
+      rating?: number;
+      connection_ms?: number;
+      first_response_ms?: number;
+      total_duration_s?: number;
+      tool_success_count?: number;
+      tool_error_count?: number;
+      last_tool_latency_ms?: number;
+      device_type?: string;
+      browser?: string;
+      os?: string;
+      page_path?: string;
+      assistant_version?: string;
+      end_reason?: string;
+    };
+    const rows: VoiceRow[] = (data as any[]) || [];
     const sessions = rows.length;
     const sum = (arr: any[], k: string) => arr.reduce((a, r) => a + (Number(r?.[k]) || 0), 0);
     const collect = (k: string) => rows.map((r: any) => Number(r?.[k])).filter((v) => Number.isFinite(v) && v > 0);
@@ -39,8 +58,8 @@ export default async function handler(req: any, res: any) {
       return v.length % 2 ? v[mid] : Math.round((v[mid - 1] + v[mid]) / 2);
     };
 
-    const basketSessions = rows.filter((r: any) => (Number(r?.basket_add_count) || 0) > 0).length;
-    const bookingSessions = rows.filter((r: any) => (Number(r?.booking_count) || 0) > 0).length;
+    const basketSessions = rows.filter((r) => (Number(r?.basket_add_count) || 0) > 0).length;
+    const bookingSessions = rows.filter((r) => (Number(r?.booking_count) || 0) > 0).length;
     const basketAdds = sum(rows, 'basket_add_count');
     const basketItems = sum(rows, 'basket_item_qty');
     const bookings = sum(rows, 'booking_count');
@@ -86,8 +105,8 @@ export default async function handler(req: any, res: any) {
         sessions,
         sessions_with_basket: basketSessions,
         sessions_with_booking: bookingSessions,
-        basket_adds,
-        basket_items,
+        basket_adds: basketAdds,
+        basket_items: basketItems,
         bookings,
         avg_rating: avgRating,
         median_connection_ms: medConn,
@@ -115,4 +134,3 @@ async function getServiceClient() {
   const { createClient } = await import('@supabase/supabase-js');
   return createClient(url, key, { auth: { persistSession: false }, global: { headers: { 'x-application-name': 'rug-cafe' } } });
 }
-
