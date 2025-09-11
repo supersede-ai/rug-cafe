@@ -29,7 +29,7 @@ Key parts
 
 3) Confidence and risk handling
    - Strong (≥ 0.70): end immediately (no extra confirmation).
-   - Borderline (0.50–0.70) or risky timing (assistant just asked a question): ask once “Do you want to end here?” and end only on an explicit yes.
+   - Borderline (0.50–0.70) or risky timing (assistant just asked a question): ask once in the user’s language to confirm intent to end; end only on an explicit yes.
    - Weak (< 0.50): ignore to minimize false positives.
 
 4) End sequence

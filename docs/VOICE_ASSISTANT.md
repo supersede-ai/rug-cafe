@@ -113,7 +113,7 @@ The assistant can now end sessions automatically when the user clearly signals t
 How it works
 - Model path: The agent says a brief, natural goodbye (in the user’s language), then calls the `end_session` tool when confident.
 - Detector path: As a fallback, the client detects end intent. On strong signals, it asks the model to speak a brief multilingual goodbye, then disconnects after a short delay.
-- Borderline/risky: The assistant asks once: “Do you want to end here?” and ends only on an explicit yes (then also speaks a short goodbye before disconnecting).
+- Borderline/risky: The assistant asks once (in the user’s language) to confirm if they intended to end; it ends only on an explicit yes, then speaks a short goodbye before disconnecting.
 - Teardown: The tool performs a clean disconnect and waits a short, configurable delay so the goodbye finishes; the tool itself does not add more speech (to avoid double-goodbyes).
 
 Notes

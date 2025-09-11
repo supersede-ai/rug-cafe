@@ -306,7 +306,11 @@ export class VoiceAssistantClient {
           const risky = shouldConfirmEnd(this.lastAssistantText, this.lastAssistantAt);
           const needsConfirm = risky || det.confidence < STRONG;
           if (needsConfirm && det.confidence >= WEAK) {
-            try { (this.session as any).sendMessage?.('Do you want to end here?'); } catch {}
+            try {
+              (this.session as any).sendMessage?.(
+                "Please ask the user, in their language, a concise confirmation question to verify they intended to end the conversation. Ask only the question and nothing else."
+              );
+            } catch {}
             this.awaitingEndConfirm = true;
             return;
           }
