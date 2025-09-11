@@ -30,6 +30,8 @@ export class VoiceAssistantClient {
   private lastDetection?: { confidence: number; strategy?: string };
   private endingByTool = false;
   private bookingMade = false;
+  private ratingRecorded = false;
+  private pendingRating = false;
 
   // Analytics + session tracking (from dashboard-integration)
   private sessionId: string = '';
@@ -135,7 +137,7 @@ export class VoiceAssistantClient {
         '- When a guest wants a reservation, gather date, time, party size, name, and at least one contact (email or phone). Confirm details aloud, then call the book_table tool.',
         '- When a guest asks to buy/add coffee, resolve which product from the catalogue they want and call add_to_basket. If you are uncertain which item, clarify before adding.',
         '- Infer when the conversation has ended based on the user\'s intent. When the user clearly indicates they are done, say a brief goodbye in the user\'s language and then call the end_session tool with a short reason. Do not end while collecting details or before executing a requested action.',
-        '- Only ask for a rating if a reservation was successfully created in this session and you are ending the conversation. Otherwise, do not ask for a rating or feedback.',
+        '- Only ask for a rating if a reservation was successfully created in this session and you are ending the conversation. First ask for a 1–5 rating, then call record_rating with that number before calling end_session. Otherwise, do not ask for a rating or feedback.',
       ].join('\n');
 
       // Initialize SDK agent + session
@@ -255,6 +257,16 @@ export class VoiceAssistantClient {
           reason: z.string().nullable().describe('Reason like "user_goodbye" (nullable)'),
         }),
         execute: async ({ reason }) => {
+          // Guard: if a booking was made but no rating yet, prompt for rating first
+          if (this.bookingMade && !this.ratingRecorded) {
+            this.pendingRating = true;
+            try {
+              (this.session as any).sendMessage?.(
+                'Before ending, please ask the user for a 1–5 rating for the assistant. After they answer, call record_rating with that number. Then you may end the session.'
+              );
+            } catch {}
+            return { ended: false, needs_rating: true } as any;
+          }
           const r = reason || 'agent_tool_end';
           this.logAnalytics({ reason: r, source: 'tool' });
           const goodbyeDelayMs = clampInt((import.meta.env.VITE_VOICE_GOODBYE_DELAY_MS as any) ?? 1200, 0, 5000);
@@ -282,6 +294,20 @@ export class VoiceAssistantClient {
             return { ok: false, skip: true, reason: 'no_booking' } as any;
           }
           await log('rating', { rating });
+          this.ratingRecorded = true;
+          // If we deferred ending to get the rating, schedule a graceful end with a short goodbye
+          if (this.pendingRating) {
+            const goodbyeDelayMs = clampInt((import.meta.env.VITE_VOICE_GOODBYE_DELAY_MS as any) ?? 1200, 0, 5000);
+            try {
+              (this.session as any).sendMessage?.(
+                "Thank you. Please say a brief, natural goodbye in the user's language and no further content."
+              );
+            } catch {}
+            setTimeout(() => {
+              this.smartEnd('rating_done', { allowGoodbyeMs: goodbyeDelayMs, doInterrupt: false, speakConfirmation: false });
+            }, 50);
+            this.pendingRating = false;
+          }
           return { ok: true } as any;
         },
       });
