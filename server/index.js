@@ -60,11 +60,14 @@ async function handleToken(_req, res) {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, 'data');
 const BOOKINGS_FILE = path.join(DATA_DIR, 'bookings.json');
+const EVENTS_FILE = path.join(DATA_DIR, 'events.json');
 
 async function ensureDataFile() {
   try { await fs.mkdir(DATA_DIR, { recursive: true }); } catch {}
   try { await fs.access(BOOKINGS_FILE); }
   catch { await fs.writeFile(BOOKINGS_FILE, '[]', 'utf-8'); }
+  try { await fs.access(EVENTS_FILE); }
+  catch { await fs.writeFile(EVENTS_FILE, '[]', 'utf-8'); }
 }
 
 async function loadBookings() {
@@ -76,6 +79,17 @@ async function loadBookings() {
 async function saveBookings(items) {
   await ensureDataFile();
   await fs.writeFile(BOOKINGS_FILE, JSON.stringify(items, null, 2), 'utf-8');
+}
+
+async function loadEvents() {
+  await ensureDataFile();
+  const raw = await fs.readFile(EVENTS_FILE, 'utf-8');
+  try { return JSON.parse(raw) || []; } catch { return []; }
+}
+
+async function saveEvents(items) {
+  await ensureDataFile();
+  await fs.writeFile(EVENTS_FILE, JSON.stringify(items, null, 2), 'utf-8');
 }
 
 const server = http.createServer(async (req, res) => {
@@ -107,6 +121,31 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'failed_to_read_bookings', details: String(err) }));
       }
+      return;
+    }
+    if (req.method === 'POST' && url.pathname === '/api/voice/event') {
+      let body = '';
+      req.on('data', (chunk) => (body += chunk));
+      req.on('end', async () => {
+        try {
+          const data = body ? JSON.parse(body) : {};
+          const now = Date.now();
+          const event = {
+            id: `ev_${now.toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
+            ts: now,
+            ua: req.headers['user-agent'] || null,
+            ...data,
+          };
+          const events = await loadEvents();
+          events.push(event);
+          await saveEvents(events);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'invalid_json', details: String(err) }));
+        }
+      });
       return;
     }
     if (req.method === 'POST' && url.pathname === '/api/booking') {

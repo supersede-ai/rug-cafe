@@ -1,3 +1,6 @@
 node_modules
 .env
 dist
+.DS_Store
+server/.port
+server/data/
