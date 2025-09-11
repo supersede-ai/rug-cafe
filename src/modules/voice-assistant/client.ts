@@ -133,7 +133,7 @@ export class VoiceAssistantClient {
         '- Keep answers concise and friendly.',
         '- When a guest wants a reservation, gather date, time, party size, name, and at least one contact (email or phone). Confirm details aloud, then call the book_table tool.',
         '- When a guest asks to buy/add coffee, resolve which product from the catalogue they want and call add_to_basket. If you are uncertain which item, clarify before adding.',
-        '- If the user clearly indicates the conversation should end (e.g., "goodbye", "that\'s all", "we\'re done"), say a brief, natural goodbye in the user\'s language and then call the end_session tool with a short reason to end the session.',
+        '- Only end the session after requested tasks are finished or the user explicitly asks you to end it (clear farewells like "goodbye"/"bye", or explicit "end the session"). Do not end while you are collecting details or before executing an action. Phrases like "that\'s it" or "that\'s all" usually mean the guest has finished providing details — proceed with the task rather than ending.',
         '- When the conversation wraps up, ask the guest to rate the assistant from 1 to 5, then call record_rating with that number.',
       ].join('\n');
 
@@ -358,7 +358,8 @@ export class VoiceAssistantClient {
           const WEAK = 0.5;
 
           const risky = shouldConfirmEnd(this.lastAssistantText, this.lastAssistantAt);
-          const needsConfirm = risky || det.confidence < STRONG;
+          const bookingCue = looksLikeBookingContext(this.lastAssistantText || '');
+          const needsConfirm = risky || bookingCue || det.confidence < STRONG;
           if (needsConfirm && det.confidence >= WEAK) {
             try {
               (this.session as any).sendMessage?.(
@@ -549,3 +550,9 @@ function clampInt(v: any, min: number, max: number): number {
 }
 
 // Dashboard analytics helpers are implemented above as class methods.
+
+function looksLikeBookingContext(text: string): boolean {
+  const s = String(text || '').toLowerCase();
+  // Heuristics for booking/reservation flow prompts from the assistant
+  return /(book|reservation|reserve|date|time|party\s*size|party\b|name|contact|email|phone|confirm|go ahead|shall i)/i.test(s);
+}

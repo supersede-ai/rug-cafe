@@ -20,6 +20,7 @@ export const defaultEndIntentConfig: EndIntentConfig = {
     // English starters; add more via config if needed
     'bye',
     'goodbye',
+    // Ambiguous phrases kept but treated with lower confidence
     "that's all",
     "that is all",
     "that's it",
@@ -27,7 +28,7 @@ export const defaultEndIntentConfig: EndIntentConfig = {
     "that's it for now",
     "we're done",
     'end session',
-    'stop',
+    // 'stop' is highly ambiguous (e.g., "stop by"); handle via explicit patterns instead
     'hang up',
     'talk later',
     'see ya',
@@ -35,7 +36,8 @@ export const defaultEndIntentConfig: EndIntentConfig = {
   ],
   allowFuzzy: true,
   fuzzyMinLength: 3,
-  riskyConfirmWindowMs: 3500,
+  // Slightly longer window to avoid ending right after assistant questions
+  riskyConfirmWindowMs: 5000,
 };
 
 export function detectEndIntentFromText(
@@ -47,6 +49,12 @@ export function detectEndIntentFromText(
   if (!text) return { match: false, confidence: 0 };
 
   const normalized = normalize(text);
+
+  // Guard common false positives around the token "stop"
+  // e.g., "we'll stop by at 7", "stop in", "stop at" should NOT end the session.
+  if (/\bstop\s+(by|in|at|for|over|into)\b/i.test(normalized)) {
+    return { match: false, confidence: 0, reason: 'stop_contextual' };
+  }
   if (looksQuotedMention(normalized)) {
     return { match: false, confidence: 0.1, reason: 'quoted_mention' };
   }
@@ -55,7 +63,17 @@ export function detectEndIntentFromText(
   for (const p of cfg.phrases) {
     const pattern = toWordBoundaryRegex(p);
     if (pattern.test(normalized)) {
-      return { match: true, confidence: 0.95, reason: `keyword:${p}` , strategy: 'keyword' };
+      // Downgrade confidence for ambiguous phrases so the caller can confirm first
+      const ambiguous = new Set([
+        "that's all",
+        'that is all',
+        "that's it",
+        'that is it',
+        "that's it for now",
+        "we're done",
+      ]);
+      const confidence = ambiguous.has(p) ? 0.6 : 0.95;
+      return { match: true, confidence, reason: `keyword:${p}` , strategy: 'keyword' };
     }
   }
 
@@ -153,4 +171,3 @@ function levenshtein(a: string, b: string): number {
   }
   return v0[bl];
 }
-
