@@ -35,6 +35,7 @@ export class VoiceAssistantClient {
   private lastBookingAt?: number;
   private lastCartActionAt?: number;
   private isInBookingFlow = false;
+  private bookingFlowStartedAt?: number;
 
   // Analytics + session tracking (from dashboard-integration)
   private sessionId: string = '';
@@ -139,7 +140,7 @@ export class VoiceAssistantClient {
         '- Keep answers concise and friendly.',
         '- When a guest wants a reservation, gather date, time, party size, name, and at least one contact (email or phone). Confirm details aloud, then call the book_table tool.',
         '- When a guest asks to buy/add coffee, resolve which product from the catalogue they want and call add_to_basket. If you are uncertain which item, clarify before adding.',
-        '- ENDING CONVERSATIONS: Only end when the user explicitly expresses farewell intent (goodbye, farewell, etc.). NEVER end during active booking flows, while collecting reservation details, immediately after completing actions (booking/adding items), or for acknowledgment responses. NEVER end for transitional phrases, expressions of satisfaction, or clarifying questions. When ending, say a brief goodbye in the user\'s language, then call end_session.',
+        '- ENDING CONVERSATIONS: Only end when the user explicitly expresses farewell intent (goodbye, farewell, etc.). NEVER end during active booking flows, while collecting reservation details, immediately after completing actions (booking/adding items), or for acknowledgment responses. NEVER end for transitional phrases, expressions of satisfaction, or clarifying questions. If a user seems to abandon a booking (says "cancel", "nevermind", "forget it", etc.), acknowledge and offer to help with something else. When ending, say a brief goodbye in the user\'s language, then call end_session.',
         '- RATING COLLECTION: After successfully creating a reservation, proactively ask for a 1-5 rating of the assistant experience. Call record_rating with their response. If they decline to rate, acknowledge politely. Rating collection is separate from conversation ending - do not automatically end after collecting ratings.',
       ].join('\n');
 
@@ -193,6 +194,7 @@ export class VoiceAssistantClient {
               this.bookingMade = true;
               this.lastBookingAt = Date.now();
               this.isInBookingFlow = false;
+              this.bookingFlowStartedAt = undefined;
             } catch {}
             return out;
           } catch (err) {
@@ -265,11 +267,25 @@ export class VoiceAssistantClient {
         execute: async ({ reason }) => {
           const now = Date.now();
           
+          // Cleanup stale states first
+          this.cleanupStaleStates(now);
+          
           // Contextual guards to prevent premature endings
           
-          // Guard 1: Prevent ending if currently in booking flow
+          // Guard 1: Prevent ending if currently in booking flow (with timeout protection)
           if (this.isInBookingFlow) {
-            return { ended: false, reason: 'blocked_booking_flow', message: 'Cannot end during active booking process.' } as any;
+            // Allow ending if booking flow has been abandoned for more than 90 seconds
+            const BOOKING_FLOW_TIMEOUT = 90 * 1000; // 90 seconds
+            if (this.bookingFlowStartedAt && (now - this.bookingFlowStartedAt) > BOOKING_FLOW_TIMEOUT) {
+              this.isInBookingFlow = false;
+              this.bookingFlowStartedAt = undefined;
+              // Log the timeout for debugging
+              try {
+                await this.logAction('booking_flow_timeout', { duration_ms: now - this.bookingFlowStartedAt });
+              } catch {}
+            } else {
+              return { ended: false, reason: 'blocked_booking_flow', message: 'Cannot end during active booking process.' } as any;
+            }
           }
           
           // Guard 2: Prevent ending if booking was just completed (within 30 seconds)
@@ -380,6 +396,9 @@ export class VoiceAssistantClient {
       // Wire session events for end-intent detection and state tracking
       this.session.on('history_updated', (history: any[]) => {
         try {
+          const now = Date.now();
+          // Proactively cleanup stale states
+          this.cleanupStaleStates(now);
           // Track last assistant text for risk assessment
           const lastAssistant = findLastText(history, 'assistant');
           if (lastAssistant) {
@@ -388,7 +407,10 @@ export class VoiceAssistantClient {
             
             // Detect if assistant is starting/in booking flow
             if (looksLikeBookingContext(lastAssistant.text)) {
-              this.isInBookingFlow = true;
+              if (!this.isInBookingFlow) {
+                this.isInBookingFlow = true;
+                this.bookingFlowStartedAt = Date.now();
+              }
             }
           }
 
@@ -402,8 +424,12 @@ export class VoiceAssistantClient {
             // Check if user provided booking-related info (keep flow active)
             const bookingResponse = /(\d{1,2}|january|february|march|april|may|june|july|august|september|october|november|december|today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|morning|afternoon|evening|\d{1,2}:\d{2}|\d{1,2}pm|\d{1,2}am|people|person|party)/i.test(lastUser.text);
             if (!bookingResponse) {
-              // User didn't provide booking info, maybe they're done with booking
-              this.isInBookingFlow = false;
+              // Check if user seems to be abandoning booking (certain phrases)
+              const abandonmentPhrases = /(cancel|stop|nevermind|never mind|forget it|not now|maybe later|skip|no thanks)/i.test(lastUser.text);
+              if (abandonmentPhrases) {
+                this.isInBookingFlow = false;
+                this.bookingFlowStartedAt = undefined;
+              }
             }
           }
 
@@ -537,6 +563,34 @@ export class VoiceAssistantClient {
     this.firstResponseSent = true;
     const ms = this.connectStartMs ? Date.now() - this.connectStartMs : undefined;
     if (typeof ms === 'number') await this.logAction('first_response', { first_response_ms: ms });
+  }
+
+  private cleanupStaleStates(now: number) {
+    // Clear stale booking flow (more than 90 seconds old)
+    const BOOKING_FLOW_TIMEOUT = 90 * 1000; // 90 seconds
+    if (this.isInBookingFlow && this.bookingFlowStartedAt && (now - this.bookingFlowStartedAt) > BOOKING_FLOW_TIMEOUT) {
+      this.isInBookingFlow = false;
+      this.bookingFlowStartedAt = undefined;
+    }
+
+    // Clear old cart action timestamps (more than 10 minutes old)
+    const CART_ACTION_CLEANUP_TIMEOUT = 10 * 60 * 1000; // 10 minutes
+    if (this.lastCartActionAt && (now - this.lastCartActionAt) > CART_ACTION_CLEANUP_TIMEOUT) {
+      this.lastCartActionAt = undefined;
+    }
+
+    // Clear old booking timestamps (more than 10 minutes old)
+    const BOOKING_CLEANUP_TIMEOUT = 10 * 60 * 1000; // 10 minutes
+    if (this.lastBookingAt && (now - this.lastBookingAt) > BOOKING_CLEANUP_TIMEOUT) {
+      this.lastBookingAt = undefined;
+    }
+
+    // Clear old assistant interaction timestamps (more than 30 minutes old)
+    const ASSISTANT_CLEANUP_TIMEOUT = 30 * 60 * 1000; // 30 minutes
+    if (this.lastAssistantAt && (now - this.lastAssistantAt) > ASSISTANT_CLEANUP_TIMEOUT) {
+      this.lastAssistantAt = undefined;
+      this.lastAssistantText = undefined;
+    }
   }
 }
 

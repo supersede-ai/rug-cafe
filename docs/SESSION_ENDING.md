@@ -25,10 +25,12 @@ Key parts
    - Local detector: Completely disabled for multilingual compatibility. All ending logic handled by the agent with contextual guards.
 
 3) Contextual guards and safety checks
-   - Blocks ending during active booking flows
+   - Blocks ending during active booking flows (with 90-second timeout for abandoned flows)
    - Blocks ending within 30 seconds of booking completion
    - Blocks ending within 15 seconds of cart actions
    - Blocks ending within 10 seconds of assistant asking questions
+   - Automatically clears stale states to prevent infinite blocking
+   - Detects booking abandonment phrases ("cancel", "nevermind", "forget it")
    - Only allows ending when user expresses explicit farewell intent
 
 4) End sequence
@@ -90,6 +92,8 @@ Client emits a best‑effort POST to `/api/voice/event` with:
 
 - Say "goodbye" or farewell in any language during a normal turn → assistant speaks goodbye → session ends after delay.
 - Try ending during booking flow → should be blocked with appropriate message.
+- Try ending during abandoned booking flow (>90 seconds) → should allow ending after timeout.
+- Say "cancel" or "nevermind" during booking → should exit booking flow and allow ending.
 - Try ending immediately after booking completion → should be blocked for 30 seconds.
 - Try ending immediately after adding to cart → should be blocked for 15 seconds.
 - Try ending immediately after assistant asks question → should be blocked for 10 seconds.
