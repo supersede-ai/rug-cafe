@@ -20,22 +20,22 @@ Key parts
 1) User speaks
    - Realtime session receives audio; when transcription is enabled, we get a text transcript.
 
-2) Detection (two sources)
-   - Model‑driven: The agent infers end intent and calls the `end_session` tool after saying a brief goodbye.
-   - Local detector: On `history_updated`, we inspect the latest user transcript and run detection:
-     - Keywords list (multi‑lingual friendly strings), word‑boundary matching.
-     - Fuzzy‑ish short‑token match with Levenshtein ≤ 1 for short terms like “bye”.
-     - Quote heuristic ignores indirect mentions (e.g., “he said ‘goodbye’”).
+2) Detection (agent-only)
+   - Model‑driven: The agent infers farewell intent and calls the `end_session` tool after saying a brief goodbye.
+   - Local detector: Completely disabled for multilingual compatibility. All ending logic handled by the agent with contextual guards.
 
-3) Confidence and risk handling
-   - Strong (≥ 0.70): end immediately (no extra confirmation).
-   - Borderline (0.50–0.70) or risky timing (assistant just asked a question): ask once in the user’s language to confirm intent to end; end only on an explicit yes.
-   - Weak (< 0.50): ignore to minimize false positives.
+3) Contextual guards and safety checks
+   - Blocks ending during active booking flows
+   - Blocks ending within 30 seconds of booking completion
+   - Blocks ending within 15 seconds of cart actions
+   - Blocks ending within 10 seconds of assistant asking questions
+   - Only allows ending when user expresses explicit farewell intent
 
 4) End sequence
-   - Tool path: the assistant says a natural goodbye, then calls `end_session`.
+   - Agent-driven: the assistant says a natural goodbye in user's language, then calls `end_session`.
+     - Contextual guards prevent premature endings during active flows
      - We wait `VITE_VOICE_GOODBYE_DELAY_MS` so the goodbye finishes, do not interrupt, then disconnect.
-   - Detector path: on strong signals, we ask the model to speak a brief, natural goodbye in the user’s language, then end with a short delay. On confirm flow, we do the same after a “yes”.
+     - Rating collection is separate from ending - no longer blocks ending flow
 
 ## Files
 
@@ -57,7 +57,9 @@ Key parts
   - `VITE_VOICE_TRANSCRIBE_MODEL` (default: `gpt-4o-mini-transcribe`)
     - Use your org’s cheapest compatible transcribe model if available.
 - Goodbye delay
-  - `VITE_VOICE_GOODBYE_DELAY_MS` (default: `1200`)
+  - `VITE_VOICE_GOODBYE_DELAY_MS` (default: `4000`)
+- Local detection (disabled)
+  - `VITE_VOICE_LOCAL_END_DETECT_ENABLED` (default: `false`) - Permanently disabled for multilingual support
 - Token endpoint
   - `VITE_VOICE_TOKEN_URL` (default: `/api/voice/token`)
 
@@ -86,8 +88,11 @@ Client emits a best‑effort POST to `/api/voice/event` with:
 
 ## QA Checklist
 
-- Say “goodbye” during a normal turn → assistant speaks goodbye → session ends after a short delay.
-- Say “stop” immediately after the assistant asks a question → assistant asks once; “yes” ends, “no” continues.
+- Say "goodbye" or farewell in any language during a normal turn → assistant speaks goodbye → session ends after delay.
+- Try ending during booking flow → should be blocked with appropriate message.
+- Try ending immediately after booking completion → should be blocked for 30 seconds.
+- Try ending immediately after adding to cart → should be blocked for 15 seconds.
+- Try ending immediately after assistant asks question → should be blocked for 10 seconds.
 - Click mic again → ends immediately with no extra speech.
 - Check analytics are recorded locally in `server/data/events.json` (dev) or function logs (Vercel).
 

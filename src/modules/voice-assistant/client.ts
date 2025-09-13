@@ -4,7 +4,7 @@ import { RealtimeAgent, RealtimeSession, tool } from '@openai/agents/realtime';
 import * as z from 'zod';
 import { COFFEE_PRODUCTS, findProduct } from '@/data/products';
 import * as Cart from '@/lib/cart';
-import { detectAffirmation, detectEndIntentFromText, detectNegation, shouldConfirmEnd } from './end-intent';
+// Local end-intent detection imports removed - now agent-driven only
 import { endSessionGracefully } from './session-teardown';
 import type { EndOptions } from './session-teardown';
 
@@ -22,18 +22,19 @@ export class VoiceAssistantClient {
   private opts: Required<VoiceAssistantOptions>;
   private agent?: RealtimeAgent;
   private session?: RealtimeSession;
-  // End-intent detection state (from integrating-MCP)
-  private awaitingEndConfirm = false;
+  // Session state tracking
   private lastAssistantText?: string;
   private lastAssistantAt?: number;
   private hasEnded = false;
-  private lastDetection?: { confidence: number; strategy?: string };
   private endingByTool = false;
   private bookingMade = false;
   private ratingRecorded = false;
   private pendingRating = false;
   private lastUserText?: string;
   private lastUserAt?: number;
+  private lastBookingAt?: number;
+  private lastCartActionAt?: number;
+  private isInBookingFlow = false;
 
   // Analytics + session tracking (from dashboard-integration)
   private sessionId: string = '';
@@ -138,8 +139,8 @@ export class VoiceAssistantClient {
         '- Keep answers concise and friendly.',
         '- When a guest wants a reservation, gather date, time, party size, name, and at least one contact (email or phone). Confirm details aloud, then call the book_table tool.',
         '- When a guest asks to buy/add coffee, resolve which product from the catalogue they want and call add_to_basket. If you are uncertain which item, clarify before adding.',
-        '- Infer when the conversation has ended based on the user\'s intent. When the user clearly indicates they are done, say a brief goodbye in the user\'s language and then call the end_session tool with a short reason. Do not end while collecting details or before executing a requested action.',
-        '- Only ask for a rating if a reservation was successfully created in this session and you are ending the conversation. First ask for a 1–5 rating, then call record_rating with that number before calling end_session. If the guest declines to rate, acknowledge politely and proceed to end_session. Otherwise, do not ask for a rating or feedback.',
+        '- ENDING CONVERSATIONS: Only end when the user explicitly expresses farewell intent (goodbye, farewell, etc.). NEVER end during active booking flows, while collecting reservation details, immediately after completing actions (booking/adding items), or for acknowledgment responses. NEVER end for transitional phrases, expressions of satisfaction, or clarifying questions. When ending, say a brief goodbye in the user\'s language, then call end_session.',
+        '- RATING COLLECTION: After successfully creating a reservation, proactively ask for a 1-5 rating of the assistant experience. Call record_rating with their response. If they decline to rate, acknowledge politely. Rating collection is separate from conversation ending - do not automatically end after collecting ratings.',
       ].join('\n');
 
       // Initialize SDK agent + session
@@ -190,6 +191,8 @@ export class VoiceAssistantClient {
               await log('turn');
               await this.markFirstResponse();
               this.bookingMade = true;
+              this.lastBookingAt = Date.now();
+              this.isInBookingFlow = false;
             } catch {}
             return out;
           } catch (err) {
@@ -239,6 +242,7 @@ export class VoiceAssistantClient {
             await log('tool_result', { name: 'add_to_basket', success: true, latency_ms: Date.now() - t0, delta: Math.max(1, items?.length || 1), item_qty_delta: Math.max(1, addedCount || 1) });
             await log('turn');
             await this.markFirstResponse();
+            this.lastCartActionAt = Date.now();
           } catch {}
           return {
             added,
@@ -252,24 +256,50 @@ export class VoiceAssistantClient {
       // End-session tool: lets the agent explicitly end on user request
       const endSessionTool = tool({
         name: 'end_session',
-        description: 'End the realtime session immediately and say a short goodbye. Use when the user clearly indicates they are done.',
+        description: 'End the conversation ONLY when user explicitly expresses farewell intent (goodbye, farewell, etc. in any language). NEVER use during booking flows, immediately after completing actions, or for acknowledgment phrases.',
         strict: true,
         parameters: z.object({
           // Structured outputs require fields to be required or nullable; avoid optional-only
           reason: z.string().nullable().describe('Reason like "user_goodbye" (nullable)'),
         }),
         execute: async ({ reason }) => {
-          // Guard: if a booking was made but no rating yet, prompt for rating first
+          const now = Date.now();
+          
+          // Contextual guards to prevent premature endings
+          
+          // Guard 1: Prevent ending if currently in booking flow
+          if (this.isInBookingFlow) {
+            return { ended: false, reason: 'blocked_booking_flow', message: 'Cannot end during active booking process.' } as any;
+          }
+          
+          // Guard 2: Prevent ending if booking was just completed (within 30 seconds)
+          if (this.lastBookingAt && (now - this.lastBookingAt) < 30000) {
+            return { ended: false, reason: 'blocked_recent_booking', message: 'Cannot end immediately after booking completion.' } as any;
+          }
+          
+          // Guard 3: Prevent ending if cart action was just completed (within 15 seconds)
+          if (this.lastCartActionAt && (now - this.lastCartActionAt) < 15000) {
+            return { ended: false, reason: 'blocked_recent_cart_action', message: 'Cannot end immediately after cart action.' } as any;
+          }
+          
+          // Guard 4: Prevent ending if assistant just asked a question (within 10 seconds)
+          if (this.lastAssistantAt && (now - this.lastAssistantAt) < 10000 && 
+              this.lastAssistantText && 
+              (this.lastAssistantText.includes('?') || /\?\s*$/.test(this.lastAssistantText))) {
+            return { ended: false, reason: 'blocked_recent_question', message: 'Cannot end immediately after asking a question.' } as any;
+          }
+          
+          // Rating collection logic (separate from ending guards)
           if (this.bookingMade && !this.ratingRecorded) {
             const userDeclined = looksLikeRatingRefusal(this.lastUserText || '');
             if (!userDeclined) {
-              this.pendingRating = true;
+              // Don't block ending, but note that rating should be collected
               try {
                 (this.session as any).sendMessage?.(
-                  'Before ending, please ask the user for a 1–5 rating for the assistant. After they answer, call record_rating with that number. Then you may end the session.'
+                  'I noticed you made a booking. Would you like to rate your experience from 1-5 before we end? If so, please share your rating.'
                 );
               } catch {}
-              return { ended: false, needs_rating: true } as any;
+              // Allow ending to proceed - rating is optional, not blocking
             }
           }
           const inferredReason = this.pendingRating && !this.ratingRecorded && looksLikeRatingRefusal(this.lastUserText || '')
@@ -355,83 +385,32 @@ export class VoiceAssistantClient {
           if (lastAssistant) {
             this.lastAssistantText = lastAssistant.text;
             this.lastAssistantAt = Date.now();
+            
+            // Detect if assistant is starting/in booking flow
+            if (looksLikeBookingContext(lastAssistant.text)) {
+              this.isInBookingFlow = true;
+            }
           }
 
           const lastUser = findLastText(history, 'user');
           if (!lastUser?.text) return;
           this.lastUserText = lastUser.text;
           this.lastUserAt = Date.now();
-
-          // Local end-intent detection is disabled by default. Enable with VITE_VOICE_LOCAL_END_DETECT_ENABLED=true
-          const localEndDetectEnabled = strToBool((import.meta.env.VITE_VOICE_LOCAL_END_DETECT_ENABLED as string) ?? 'false');
-          if (!localEndDetectEnabled) return;
-
-          // If a tool-driven ending is already in progress, ignore local detection
-          if (this.endingByTool) return;
-
-          // If we're waiting on explicit confirmation, short-circuit
-          if (this.awaitingEndConfirm) {
-            if (detectAffirmation(lastUser.text)) {
-              this.awaitingEndConfirm = false;
-              this.logAnalytics({ reason: 'user_goodbye_confirmed', source: 'detector_confirm', ...this.lastDetection });
-              // Speak a brief, natural goodbye (multilingual) then end
-              const goodbyeDelayMs = clampInt((import.meta.env.VITE_VOICE_GOODBYE_DELAY_MS as any) ?? 1200, 0, 5000);
-              try {
-                (this.session as any).sendMessage?.(
-                  "Please say a brief, natural goodbye in the user's language and no further content."
-                );
-              } catch {}
-              this.smartEnd('user_goodbye_confirmed', {
-                allowGoodbyeMs: goodbyeDelayMs,
-                doInterrupt: false,
-                speakConfirmation: false,
-              });
-              return;
+          
+          // Detect if user is providing booking information
+          if (this.isInBookingFlow && !this.bookingMade) {
+            // Check if user provided booking-related info (keep flow active)
+            const bookingResponse = /(\d{1,2}|january|february|march|april|may|june|july|august|september|october|november|december|today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|morning|afternoon|evening|\d{1,2}:\d{2}|\d{1,2}pm|\d{1,2}am|people|person|party)/i.test(lastUser.text);
+            if (!bookingResponse) {
+              // User didn't provide booking info, maybe they're done with booking
+              this.isInBookingFlow = false;
             }
-            if (detectNegation(lastUser.text)) {
-              this.awaitingEndConfirm = false;
-              // Carry on; no end.
-              return;
-            }
-            // Ambiguous; ignore and continue.
-            return;
           }
 
-          // Run detector on the latest user utterance
-          const det = detectEndIntentFromText(lastUser.text);
-          if (!det.match) return;
-          this.lastDetection = { confidence: det.confidence, strategy: det.strategy };
-          const STRONG = 0.7;
-          const WEAK = 0.5;
+          // Local end-intent detection is completely disabled. The agent should handle all ending logic via the end_session tool.
+          return;
 
-          const risky = shouldConfirmEnd(this.lastAssistantText, this.lastAssistantAt);
-          const bookingCue = looksLikeBookingContext(this.lastAssistantText || '');
-          const needsConfirm = risky || bookingCue || det.confidence < STRONG;
-          if (needsConfirm && det.confidence >= WEAK) {
-            try {
-              (this.session as any).sendMessage?.(
-                "Please ask the user, in their language, a concise confirmation question to verify they intended to end the conversation. Ask only the question and nothing else."
-              );
-            } catch {}
-            this.awaitingEndConfirm = true;
-            return;
-          }
-
-          if (det.confidence >= STRONG) {
-            this.logAnalytics({ reason: 'user_goodbye', source: 'detector', ...this.lastDetection });
-            // Multilingual goodbye via the model, then disconnect without cutting off audio
-            const goodbyeDelayMs = clampInt((import.meta.env.VITE_VOICE_GOODBYE_DELAY_MS as any) ?? 1200, 0, 5000);
-            try {
-              (this.session as any).sendMessage?.(
-                "Please say a brief, natural goodbye in the user's language and no further content."
-              );
-            } catch {}
-            this.smartEnd('user_goodbye', {
-              allowGoodbyeMs: goodbyeDelayMs,
-              doInterrupt: false,
-              speakConfirmation: false,
-            });
-          }
+          // All local detection logic has been removed. The agent handles ending via end_session tool only.
         } catch (e) {
           // non-fatal
           console.warn('history_updated handler error', e);
@@ -491,7 +470,6 @@ export class VoiceAssistantClient {
       this.session = undefined;
       this.agent = undefined;
       this.started = false;
-      this.awaitingEndConfirm = false;
       this.endingByTool = false;
       this.opts.onStatus('stopped');
       this.hasEnded = false;

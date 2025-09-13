@@ -16,66 +16,21 @@ export type EndIntentDetection = {
 };
 
 export const defaultEndIntentConfig: EndIntentConfig = {
-  // No hardcoded phrases; rely on the agent to call the end_session tool.
+  // Completely disabled local detection; rely entirely on the agent to call the end_session tool.
   phrases: [],
   allowFuzzy: false,
   fuzzyMinLength: 3,
-  // Slightly longer window to avoid ending right after assistant questions
-  riskyConfirmWindowMs: 5000,
+  // Longer window to avoid ending right after assistant questions
+  riskyConfirmWindowMs: 10000,
 };
 
 export function detectEndIntentFromText(
   raw: string | undefined | null,
   config: Partial<EndIntentConfig> = {}
 ): EndIntentDetection {
-  const cfg = { ...defaultEndIntentConfig, ...config } as EndIntentConfig;
-  const text = (raw || '').trim();
-  if (!text) return { match: false, confidence: 0 };
-
-  const normalized = normalize(text);
-
-  // Guard common false positives around the token "stop"
-  // e.g., "we'll stop by at 7", "stop in", "stop at" should NOT end the session.
-  if (/\bstop\s+(by|in|at|for|over|into)\b/i.test(normalized)) {
-    return { match: false, confidence: 0, reason: 'stop_contextual' };
-  }
-  if (looksQuotedMention(normalized)) {
-    return { match: false, confidence: 0.1, reason: 'quoted_mention' };
-  }
-
-  // If there are no phrases configured, do not attempt local detection.
-  if (!cfg.phrases || cfg.phrases.length === 0) {
-    return { match: false, confidence: 0 };
-  }
-
-  // Exact keyword/phrase match (word-boundary or whole-utterance)
-  for (const p of cfg.phrases) {
-    const pattern = toWordBoundaryRegex(p);
-    if (pattern.test(normalized)) {
-      return { match: true, confidence: 0.95, reason: `keyword:${p}` , strategy: 'keyword' };
-    }
-  }
-
-  // Heuristic / fuzzy-ish: allow small edit variants for short tokens
-  if (cfg.allowFuzzy) {
-    const tokens = normalized.split(/\s+/).filter(Boolean);
-    for (const t of tokens) {
-      if (t.length < cfg.fuzzyMinLength) continue;
-      for (const p of cfg.phrases) {
-        if (p.length > 12) continue; // limit fuzzy to short phrases
-        const base = p.split(' ')[0];
-        const d = levenshtein(base, t);
-        if (d === 0) {
-          return { match: true, confidence: 0.85, reason: `fuzzy:${base}=0`, strategy: 'fuzzy' };
-        }
-        if (d === 1 && Math.abs(base.length - t.length) <= 1) {
-          return { match: true, confidence: 0.7, reason: `fuzzy:${base}=1`, strategy: 'fuzzy' };
-        }
-      }
-    }
-  }
-
-  return { match: false, confidence: 0 };
+  // Local detection is completely disabled. Always return no match.
+  // The agent should use the end_session tool explicitly when the user indicates farewell intent.
+  return { match: false, confidence: 0, reason: 'local_detection_disabled' };
 }
 
 export function detectAffirmation(raw: string | undefined | null): boolean {
@@ -122,13 +77,8 @@ function toWordBoundaryRegex(phrase: string): RegExp {
 }
 
 function looksQuotedMention(text: string): boolean {
-  // If the phrase is inside quotes, likely a mention rather than an intent.
-  // e.g., He said "goodbye" to me.
-  // Simple heuristic: quoted segments exist and contain an end phrase.
-  const quoted = Array.from(text.matchAll(/"([^"]+)"|'([^']+)'/g)).map(m => m[1] || m[2] || '');
-  if (!quoted.length) return false;
-  const phrases = defaultEndIntentConfig.phrases;
-  return quoted.some(q => phrases.some(p => toWordBoundaryRegex(p).test(q)));
+  // Disabled since local detection is no longer used
+  return false;
 }
 
 function levenshtein(a: string, b: string): number {
