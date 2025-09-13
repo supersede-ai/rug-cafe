@@ -49,7 +49,7 @@ export class VoiceAssistantClient {
         (import.meta.env.VITE_VOICE_TOKEN_URL as string) || '/api/voice/token',
       model: opts.model || 'gpt-realtime',
       voice: opts.voice || 'marin',
-      instructions: opts.instructions || 'You are a friendly cafe voice assistant. Answer succinctly and accurately. If you are unsure or information is not available, politely say so and point the guest to the correct page (Menu, Hours, Location).',
+      instructions: opts.instructions || '', // Base instructions moved to secure prompt template
       onStatus: opts.onStatus || (() => {}),
       onError: opts.onError || (() => {}),
     };
@@ -121,28 +121,17 @@ export class VoiceAssistantClient {
           utm_campaign: utm.campaign,
         });
       } catch {}
-      // Build instructions with a page snapshot for grounded answers
+      // Build dynamic context for prompt variables (page snapshot for grounded answers)
       const pageText = this.safeClip(document.body?.innerText || '', 6000);
       // Build a compact product catalogue to ground shopping queries
       const catalogueLines = COFFEE_PRODUCTS.map(p => `- ${p.name} [${p.category}] — notes: ${p.notes}; from £${p.priceFrom.toFixed(2)}`).join('\n');
 
-      const instructions = [
-        this.opts.instructions,
-        '',
-        'Context (page snapshot):',
-        pageText,
-        '',
-        'Rug Coffee Catalogue:',
-        catalogueLines,
-        '',
-        'Guidelines:',
-        '- If unsure, say so and direct to Menu or Hours.',
-        '- Keep answers concise and friendly.',
-        '- When a guest wants a reservation, gather date, time, party size, name, and at least one contact (email or phone). Confirm details aloud, then call the book_table tool.',
-        '- When a guest asks to buy/add coffee, resolve which product from the catalogue they want and call add_to_basket. If you are uncertain which item, clarify before adding.',
-        '- ENDING CONVERSATIONS: Only end when the user explicitly expresses farewell intent (goodbye, farewell, etc.). NEVER end during active booking flows, while collecting reservation details, immediately after completing actions (booking/adding items), or for acknowledgment responses. NEVER end for transitional phrases, expressions of satisfaction, or clarifying questions. If a user seems to abandon a booking (says "cancel", "nevermind", "forget it", etc.), acknowledge and offer to help with something else. When ending, say a brief goodbye in the user\'s language, then call end_session.',
-        '- RATING COLLECTION: After successfully creating a reservation, proactively ask for a 1-5 rating of the assistant experience. Call record_rating with their response. If they decline to rate, acknowledge politely. Rating collection is separate from conversation ending - do not automatically end after collecting ratings.',
-      ].join('\n');
+      // Prepare prompt variables for secure prompt template
+      // Note: base_instructions are now hardcoded in the secure prompt template
+      const promptVariables = {
+        page_context: pageText,
+        product_catalogue: catalogueLines,
+      };
 
       // Initialize SDK agent + session
       const bookTableTool = tool({
@@ -366,12 +355,52 @@ export class VoiceAssistantClient {
         },
       });
 
-      this.agent = new RealtimeAgent({
-        name: 'Rug Assistant',
-        instructions,
-        tools: [bookTableTool, addToBasketTool, endSessionTool, recordRatingTool],
-        voice: this.opts.voice,
-      });
+      // Check if we should use Prompt ID (secure) or fallback to inline instructions
+      const promptId = (import.meta.env.VITE_VOICE_PROMPT_ID as string)?.trim();
+      
+      if (promptId) {
+        // Use secure Prompt ID with variables
+        console.log('🔒 VoiceAssistant: Using secure Prompt ID:', promptId);
+        console.log('📝 VoiceAssistant: Prompt variables:', {
+          page_context_length: promptVariables.page_context?.length,
+          product_catalogue_length: promptVariables.product_catalogue?.length
+        });
+        this.agent = new RealtimeAgent({
+          name: 'Rug Assistant',
+          promptId: promptId,
+          promptVariables: promptVariables,
+          tools: [bookTableTool, addToBasketTool, endSessionTool, recordRatingTool],
+          voice: this.opts.voice,
+        });
+        console.log('✅ VoiceAssistant: RealtimeAgent created with Prompt ID');
+      } else {
+        // Fallback to inline instructions (less secure, for development)
+        console.warn('VITE_VOICE_PROMPT_ID not configured - using inline instructions (less secure)');
+        const fallbackInstructions = [
+          'You are a friendly cafe voice assistant. Answer succinctly and accurately. If you are unsure or information is not available, politely say so and point the guest to the correct page (Menu, Hours, Location).',
+          '',
+          'Context (page snapshot):',
+          pageText,
+          '',
+          'Rug Coffee Catalogue:',
+          catalogueLines,
+          '',
+          'Guidelines:',
+          '- If unsure, say so and direct to Menu or Hours.',
+          '- Keep answers concise and friendly.',
+          '- When a guest wants a reservation, gather date, time, party size, name, and at least one contact (email or phone). Confirm details aloud, then call the book_table tool.',
+          '- When a guest asks to buy/add coffee, resolve which product from the catalogue they want and call add_to_basket. If you are uncertain which item, clarify before adding.',
+          '- ENDING CONVERSATIONS: Only end when the user explicitly expresses farewell intent (goodbye, farewell, etc.). NEVER end during active booking flows, while collecting reservation details, immediately after completing actions (booking/adding items), or for acknowledgment responses. NEVER end for transitional phrases, expressions of satisfaction, or clarifying questions. If a user seems to abandon a booking (says "cancel", "nevermind", "forget it", etc.), acknowledge and offer to help with something else. When ending, say a brief goodbye in the user\'s language, then call end_session.',
+          '- RATING COLLECTION: After successfully creating a reservation, proactively ask for a 1-5 rating of the assistant experience. Call record_rating with their response. If they decline to rate, acknowledge politely. Rating collection is separate from conversation ending - do not automatically end after collecting ratings.',
+        ].join('\n');
+        
+        this.agent = new RealtimeAgent({
+          name: 'Rug Assistant',
+          instructions: fallbackInstructions,
+          tools: [bookTableTool, addToBasketTool, endSessionTool, recordRatingTool],
+          voice: this.opts.voice,
+        });
+      }
       const transcribeEnabled = strToBool((import.meta.env.VITE_VOICE_TRANSCRIBE_ENABLED as string) ?? 'true');
       const transcribeModel = (import.meta.env.VITE_VOICE_TRANSCRIBE_MODEL as string) || 'gpt-4o-mini-transcribe';
 
