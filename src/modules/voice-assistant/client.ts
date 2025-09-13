@@ -121,8 +121,8 @@ export class VoiceAssistantClient {
           utm_campaign: utm.campaign,
         });
       } catch {}
-      // Build dynamic context for prompt variables (page snapshot for grounded answers)
-      const pageText = this.safeClip(document.body?.innerText || '', 6000);
+      // Build minimal page context for grounding (keep it small to save tokens)
+      const pageText = this.safeClip(document.body?.innerText || '', 500);
       // Build a compact product catalogue to ground shopping queries
       const catalogueLines = COFFEE_PRODUCTS.map(p => `- ${p.name} [${p.category}] — notes: ${p.notes}; from £${p.priceFrom.toFixed(2)}`).join('\n');
 
@@ -153,41 +153,62 @@ export class VoiceAssistantClient {
             }),
           specialRequests: z.string().optional().nullable(),
         }),
-        async execute(input) {
+        execute: async (input) => {
+          console.log('🏁 book_table tool called with input:', input);
           const t0 = Date.now();
           try {
+            const requestBody = {
+              date: input.date,
+              time: input.time,
+              partySize: input.partySize,
+              name: input.name,
+              email: input.contact?.email,
+              phone: input.contact?.phone,
+              specialRequests: input.specialRequests,
+            };
+            console.log('📤 Sending booking request to /api/booking:', requestBody);
+            
             const res = await fetch('/api/booking', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                date: input.date,
-                time: input.time,
-                partySize: input.partySize,
-                name: input.name,
-                email: input.contact?.email,
-                phone: input.contact?.phone,
-                specialRequests: input.specialRequests,
-              }),
+              body: JSON.stringify(requestBody),
             });
+            
+            console.log('📥 Booking API response status:', res.status);
+            
             if (!res.ok) {
               let text = '';
               try { text = await res.text(); } catch {}
+              console.error('❌ Booking failed:', res.status, text);
               await log('tool_result', { name: 'book_table', success: false, latency_ms: Date.now() - t0 });
               throw new Error(`Booking failed: ${res.status}${text ? ` - ${text}` : ''}`);
             }
             const out = await res.json();
+            console.log('✅ Booking successful! Response:', out);
+            
+            // Update booking state immediately (don't let logging errors block this)
+            this.bookingMade = true;
+            this.lastBookingAt = Date.now();
+            this.isInBookingFlow = false;
+            this.bookingFlowStartedAt = undefined;
+            console.log('🎯 Booking state updated:', { 
+              bookingMade: this.bookingMade, 
+              isInBookingFlow: this.isInBookingFlow,
+              lastBookingAt: this.lastBookingAt 
+            });
+            
+            // Try to log analytics but don't block on failures
             try {
               await log('tool_result', { name: 'book_table', success: true, latency_ms: Date.now() - t0, delta: 1 });
               await log('turn');
               await this.markFirstResponse();
-              this.bookingMade = true;
-              this.lastBookingAt = Date.now();
-              this.isInBookingFlow = false;
-              this.bookingFlowStartedAt = undefined;
-            } catch {}
+            } catch (e) {
+              console.warn('Analytics logging failed (non-critical):', e);
+            }
+            
             return out;
           } catch (err) {
-            // already logged above in failure case
+            console.error('💥 book_table tool error:', err);
             throw err;
           }
         },
@@ -212,7 +233,7 @@ export class VoiceAssistantClient {
             .min(1)
             .describe('List of items to add'),
         }),
-        async execute({ items }) {
+        execute: async ({ items }) => {
           const added: any[] = [];
           const notFound: any[] = [];
           const t0 = Date.now();
@@ -247,70 +268,95 @@ export class VoiceAssistantClient {
       // End-session tool: lets the agent explicitly end on user request
       const endSessionTool = tool({
         name: 'end_session',
-        description: 'End the conversation ONLY when user explicitly expresses farewell intent (goodbye, farewell, etc. in any language). NEVER use during booking flows, immediately after completing actions, or for acknowledgment phrases.',
+        description: 'End the conversation when the user explicitly expresses farewell intent (goodbye, bye, take care, see you later, etc., in any language). If the user says goodbye, end immediately — even if currently in a booking flow or right after completing actions. Otherwise, NEVER end during active flows, while collecting details, immediately after completing actions, or for acknowledgment phrases.',
         strict: true,
         parameters: z.object({
           // Structured outputs require fields to be required or nullable; avoid optional-only
           reason: z.string().nullable().describe('Reason like "user_goodbye" (nullable)'),
         }),
         execute: async ({ reason }) => {
+          console.log('🔚 end_session tool called with reason:', reason);
+          console.log('🔍 Current booking state:', {
+            isInBookingFlow: this.isInBookingFlow,
+            bookingMade: this.bookingMade,
+            lastBookingAt: this.lastBookingAt,
+            bookingFlowStartedAt: this.bookingFlowStartedAt
+          });
           const now = Date.now();
           
           // Cleanup stale states first
           this.cleanupStaleStates(now);
           
           // Contextual guards to prevent premature endings
+          const farewellRegex = /(goodbye|farewell|\bbye\b|see\s*you|take\s*care|later|ciao|ad(i|í)os|au\s*revoir|hasta\s*luego|sayonara|tsch(ü|u|ue)ss)/i;
+          const isFarewell = (typeof reason === 'string' && farewellRegex.test(reason)) || farewellRegex.test(this.lastUserText || '');
           
           // Guard 1: Prevent ending if currently in booking flow (with timeout protection)
-          if (this.isInBookingFlow) {
+          if (this.isInBookingFlow && !isFarewell) {
+            console.log('❌ Blocking end_session: still in booking flow');
             // Allow ending if booking flow has been abandoned for more than 90 seconds
             const BOOKING_FLOW_TIMEOUT = 90 * 1000; // 90 seconds
             if (this.bookingFlowStartedAt && (now - this.bookingFlowStartedAt) > BOOKING_FLOW_TIMEOUT) {
+              const duration = now - this.bookingFlowStartedAt;
               this.isInBookingFlow = false;
               this.bookingFlowStartedAt = undefined;
+              console.log('✅ Booking flow timeout - allowing end');
               // Log the timeout for debugging
               try {
-                await this.logAction('booking_flow_timeout', { duration_ms: now - this.bookingFlowStartedAt });
+                await this.logAction('booking_flow_timeout', { duration_ms: duration });
               } catch {}
             } else {
               return { ended: false, reason: 'blocked_booking_flow', message: 'Cannot end during active booking process.' } as any;
             }
           }
           
-          // Guard 2: Prevent ending if booking was just completed (within 30 seconds)
-          if (this.lastBookingAt && (now - this.lastBookingAt) < 30000) {
+          // Guard 2: Prevent ending if booking was just completed (within 10 seconds - reduced from 30)
+          const timeSinceBooking = this.lastBookingAt ? (now - this.lastBookingAt) : Infinity;
+          // Allow immediate end if farewell intent is explicit
+          if (this.lastBookingAt && timeSinceBooking < 10000 && !isFarewell) {
+            console.log(`❌ Blocking end_session: booking completed only ${Math.round(timeSinceBooking/1000)}s ago (need 10s)`);
             return { ended: false, reason: 'blocked_recent_booking', message: 'Cannot end immediately after booking completion.' } as any;
           }
           
           // Guard 3: Prevent ending if cart action was just completed (within 15 seconds)
-          if (this.lastCartActionAt && (now - this.lastCartActionAt) < 15000) {
+          if (this.lastCartActionAt && (now - this.lastCartActionAt) < 15000 && !isFarewell) {
+            console.log('❌ Blocking end_session: recent cart action');
             return { ended: false, reason: 'blocked_recent_cart_action', message: 'Cannot end immediately after cart action.' } as any;
           }
           
           // Guard 4: Prevent ending if assistant just asked a question (within 10 seconds)
           if (this.lastAssistantAt && (now - this.lastAssistantAt) < 10000 && 
               this.lastAssistantText && 
-              (this.lastAssistantText.includes('?') || /\?\s*$/.test(this.lastAssistantText))) {
+              (this.lastAssistantText.includes('?') || /\?\s*$/.test(this.lastAssistantText)) &&
+              !isFarewell) {
+            console.log('❌ Blocking end_session: just asked a question');
             return { ended: false, reason: 'blocked_recent_question', message: 'Cannot end immediately after asking a question.' } as any;
           }
+          
+          console.log('✅ All guards passed - proceeding to end session');
           
           // Rating collection logic (separate from ending guards)
           if (this.bookingMade && !this.ratingRecorded) {
             const userDeclined = looksLikeRatingRefusal(this.lastUserText || '');
+            console.log('🔍 Rating check:', { bookingMade: this.bookingMade, ratingRecorded: this.ratingRecorded, userDeclined, lastUserText: this.lastUserText });
             if (!userDeclined) {
               // Don't block ending, but note that rating should be collected
+              console.log('📝 Requesting rating before end');
               try {
                 (this.session as any).sendMessage?.(
                   'I noticed you made a booking. Would you like to rate your experience from 1-5 before we end? If so, please share your rating.'
                 );
               } catch {}
               // Allow ending to proceed - rating is optional, not blocking
+            } else {
+              console.log('✅ User declined rating - proceeding to end');
             }
           }
           const inferredReason = this.pendingRating && !this.ratingRecorded && looksLikeRatingRefusal(this.lastUserText || '')
             ? 'rating_declined'
             : 'agent_tool_end';
           const r = reason || inferredReason;
+          console.log('🏁 Ending session with reason:', r);
           this.logAnalytics({ reason: r, source: 'tool' });
           const goodbyeDelayMs = clampInt((import.meta.env.VITE_VOICE_GOODBYE_DELAY_MS as any) ?? 1200, 0, 5000);
           // Mark tool-driven ending to avoid detector races, schedule teardown after tool result posts
@@ -330,7 +376,7 @@ export class VoiceAssistantClient {
         parameters: z.object({
           rating: z.number().int().min(1).max(5).describe('User rating from 1 to 5'),
         }),
-        async execute({ rating }) {
+        execute: async ({ rating }) => {
           // Only allow rating if a booking was successfully created in this session
           if (!this.bookingMade) {
             try { await log('status', { state: 'rating_skipped_no_booking' }); } catch {}
@@ -355,52 +401,90 @@ export class VoiceAssistantClient {
         },
       });
 
-      // Check if we should use Prompt ID (secure) or fallback to inline instructions
-      const promptId = (import.meta.env.VITE_VOICE_PROMPT_ID as string)?.trim();
+      // Use inline instructions with proper menu data
+      console.log('📝 VoiceAssistant: Building inline instructions with menu data');
+      console.log('📊 Dynamic context lengths:', {
+        page_context_length: pageText?.length,
+        product_catalogue_length: catalogueLines?.length
+      });
       
-      if (promptId) {
-        // Use secure Prompt ID with variables
-        console.log('🔒 VoiceAssistant: Using secure Prompt ID:', promptId);
-        console.log('📝 VoiceAssistant: Prompt variables:', {
-          page_context_length: promptVariables.page_context?.length,
-          product_catalogue_length: promptVariables.product_catalogue?.length
-        });
-        this.agent = new RealtimeAgent({
-          name: 'Rug Assistant',
-          promptId: promptId,
-          promptVariables: promptVariables,
-          tools: [bookTableTool, addToBasketTool, endSessionTool, recordRatingTool],
-          voice: this.opts.voice,
-        });
-        console.log('✅ VoiceAssistant: RealtimeAgent created with Prompt ID');
-      } else {
-        // Fallback to inline instructions (less secure, for development)
-        console.warn('VITE_VOICE_PROMPT_ID not configured - using inline instructions (less secure)');
-        const fallbackInstructions = [
-          'You are a friendly cafe voice assistant. Answer succinctly and accurately. If you are unsure or information is not available, politely say so and point the guest to the correct page (Menu, Hours, Location).',
-          '',
-          'Context (page snapshot):',
-          pageText,
-          '',
-          'Rug Coffee Catalogue:',
-          catalogueLines,
-          '',
-          'Guidelines:',
-          '- If unsure, say so and direct to Menu or Hours.',
-          '- Keep answers concise and friendly.',
-          '- When a guest wants a reservation, gather date, time, party size, name, and at least one contact (email or phone). Confirm details aloud, then call the book_table tool.',
-          '- When a guest asks to buy/add coffee, resolve which product from the catalogue they want and call add_to_basket. If you are uncertain which item, clarify before adding.',
-          '- ENDING CONVERSATIONS: Only end when the user explicitly expresses farewell intent (goodbye, farewell, etc.). NEVER end during active booking flows, while collecting reservation details, immediately after completing actions (booking/adding items), or for acknowledgment responses. NEVER end for transitional phrases, expressions of satisfaction, or clarifying questions. If a user seems to abandon a booking (says "cancel", "nevermind", "forget it", etc.), acknowledge and offer to help with something else. When ending, say a brief goodbye in the user\'s language, then call end_session.',
-          '- RATING COLLECTION: After successfully creating a reservation, proactively ask for a 1-5 rating of the assistant experience. Call record_rating with their response. If they decline to rate, acknowledge politely. Rating collection is separate from conversation ending - do not automatically end after collecting ratings.',
-        ].join('\n');
-        
-        this.agent = new RealtimeAgent({
-          name: 'Rug Assistant',
-          instructions: fallbackInstructions,
-          tools: [bookTableTool, addToBasketTool, endSessionTool, recordRatingTool],
-          voice: this.opts.voice,
-        });
-      }
+      const instructions = [
+        'You are a friendly cafe voice assistant for The Rug Café. Answer succinctly and accurately. If you are unsure or information is not available, politely say so and point the guest to the correct page (Menu, Hours, Location).',
+        '',
+        '- Only reference menu items that are explicitly listed in the provided menu data',
+        '- Do not invent, assume, or suggest menu items that don\'t exist',
+        '- If asked about an item not on the menu, politely say so and suggest checking the Menu page',
+        '- Stick strictly to the breakfast, lunch, drinks, and other categories provided',
+        '',
+        'Context (page snapshot):',
+        pageText,
+        '',
+        'Rug Coffee Catalogue:',
+        catalogueLines,
+        '',
+        'The Rug Café Menu:',
+        '',
+        '**DRINKS**',
+        '',
+        'Coffee:',
+        '- Espresso: £2.80 (hot only)',
+        '- Americano: £3.00 hot / £3.20 iced',
+        '- Piccolo: £3.20 (hot only)',
+        '- Flat White: £3.40 (hot only)',
+        '- Cortado: £3.50 (hot only)',
+        '- Macchiato: £3.50 (hot only)',
+        '- Cappuccino: £3.60 (hot only)',
+        '- Latte: £3.60 hot / £4.00 iced',
+        '- House Latte: £3.80 hot / £4.20 iced',
+        '- Mocha: £4.00 hot / £4.40 iced',
+        '- Additions: oat milk/soy +£0.40, honey/syrup +£0.20',
+        '',
+        'Specials:',
+        '- Kyoto Matcha Latte: £4.50 hot / £5.00 iced',
+        '- Chai Tea Latte: £3.80 hot / £4.20 iced',
+        '- Hot Chocolate: £4.00 hot / £4.50 iced',
+        '- Crème Brûlée Latte: £4.50 (hot only)',
+        '- Rose Latte: £4.50 hot / £5.00 iced',
+        '- Caramel Cookie Latte: £4.50 hot / £5.00 iced',
+        '- Brown Sugar Bubble Latte/Tea: £4.80 hot / £5.30 iced',
+        '',
+        '**BREAKFAST & BRUNCH**',
+        '',
+        'Porridge:',
+        '- California (banana, apple, sunflower seeds, peanut butter cream): £7.00',
+        '- Istanbul (mixed berries, roasted walnuts, honey): £7.00',
+        '- Seoul (Korean kimchi, fried onion, garlic, fried egg): £7.80',
+        '',
+        'On Toast:',
+        '- Eggs on Toast (2 scrambled/sunny eggs on sourdough, chives): £7.00',
+        '- Banana on Toast (caramelized banana, peanut butter cream, oats, walnuts, blueberry): £7.00',
+        '- Avocado on Toast (avocado, rocket, sunflower seeds, feta, olive oil): £7.80',
+        '- Salmon on Toast (cream cheese, smoked salmon, capers, red onions, dill, chives): £7.00',
+        '',
+        'Guidelines:',
+        '- If unsure, say so and direct to Menu or Hours.',
+        '- Keep answers concise and friendly.',
+        '- When a guest wants a reservation, gather date, time, party size, name, and at least one contact (email or phone). Confirm details aloud, then call the book_table tool.',
+        '- When a guest asks to buy/add coffee, resolve which product from the catalogue they want and call add_to_basket. If you are uncertain which item, clarify before adding.',
+        '- ENDING CONVERSATIONS: Only end when the user explicitly expresses farewell intent (goodbye, farewell, etc.). NEVER end during active booking flows, while collecting reservation details, immediately after completing actions (booking/adding items), or for acknowledgment responses. NEVER end for transitional phrases, expressions of satisfaction, or clarifying questions. If a user seems to abandon a booking (says "cancel", "nevermind", "forget it", etc.), acknowledge and offer to help with something else. When ending, say a brief goodbye in the user\'s language, then call end_session.',
+        '',
+        'IMPORTANT - CONVERSATION ENDING RULES:',
+        '1. WHEN TO END: Only when the user says goodbye, bye, take care, see you later, etc.',
+        '2. HOW TO END: Call the end_session tool immediately when the user expresses farewell.',
+        '3. AFTER BOOKING: You CAN end immediately after a successful booking if the user says goodbye.',
+        '4. RATING: Ask for a rating after booking, but if the user declines or says goodbye, end anyway.',
+        '5. NEVER refuse to end when the user clearly wants to leave.',
+        '- RATING COLLECTION: After successfully creating a reservation, proactively ask for a 1-5 rating of the assistant experience. Call record_rating with their response. If they decline to rate, acknowledge politely. Rating collection is separate from conversation ending - do not automatically end after collecting ratings.',
+      ].join('\n');
+      
+      this.agent = new RealtimeAgent({
+        name: 'Rug Assistant',
+        instructions: instructions,
+        tools: [bookTableTool, addToBasketTool, endSessionTool, recordRatingTool],
+        voice: this.opts.voice,
+      });
+      
+      console.log('✅ VoiceAssistant: RealtimeAgent created with inline instructions');
       const transcribeEnabled = strToBool((import.meta.env.VITE_VOICE_TRANSCRIBE_ENABLED as string) ?? 'true');
       const transcribeModel = (import.meta.env.VITE_VOICE_TRANSCRIBE_MODEL as string) || 'gpt-4o-mini-transcribe';
 
@@ -421,6 +505,7 @@ export class VoiceAssistantClient {
         this.session.connect({ apiKey: ephemeral }),
         new Promise((_resolve, reject) => setTimeout(() => reject(new Error('connect-timeout')), timeoutMs)),
       ]);
+      
       this.opts.onStatus('ready');
       // Wire session events for end-intent detection and state tracking
       this.session.on('history_updated', (history: any[]) => {
@@ -431,8 +516,12 @@ export class VoiceAssistantClient {
           // Track last assistant text for risk assessment
           const lastAssistant = findLastText(history, 'assistant');
           if (lastAssistant) {
-            this.lastAssistantText = lastAssistant.text;
-            this.lastAssistantAt = Date.now();
+            // Only log if this is a new/different message (avoid duplicates)
+            if (this.lastAssistantText !== lastAssistant.text) {
+              this.lastAssistantText = lastAssistant.text;
+              this.lastAssistantAt = Date.now();
+              console.log('🤖 Assistant said:', lastAssistant.text);
+            }
             
             // Detect if assistant is starting/in booking flow
             if (looksLikeBookingContext(lastAssistant.text)) {
@@ -445,8 +534,13 @@ export class VoiceAssistantClient {
 
           const lastUser = findLastText(history, 'user');
           if (!lastUser?.text) return;
-          this.lastUserText = lastUser.text;
-          this.lastUserAt = Date.now();
+          
+          // Only log if this is a new/different message (avoid duplicates)
+          if (this.lastUserText !== lastUser.text) {
+            this.lastUserText = lastUser.text;
+            this.lastUserAt = Date.now();
+            console.log('👤 User said:', lastUser.text);
+          }
           
           // Detect if user is providing booking information
           if (this.isInBookingFlow && !this.bookingMade) {
